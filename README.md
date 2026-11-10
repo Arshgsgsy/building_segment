@@ -107,7 +107,8 @@ You do this once per computer. It works on Windows, Mac and Linux. Allow about 2
 ### Step 1. Install GitHub Desktop (to download and upload the project)
 
 1. Make a free account at <https://github.com/signup> if you don't have one, and send your GitHub
-   username to the project lead so they can give you access to the project.
+   username to the project lead. Anyone can download the project, but only people the lead adds can
+   upload (push) their work to it.
 2. Download and install **GitHub Desktop** from <https://desktop.github.com>. Open it and sign in
    with your GitHub account.
 
@@ -117,10 +118,10 @@ You do this once per computer. It works on Windows, Mac and Linux. Allow about 2
 ### Step 2. Get the project onto your computer (clone)
 
 1. Once the project lead has added you, in GitHub Desktop choose **File → Clone repository**.
-2. Pick the project (`sanborn_labeling`) from the list, or paste the link the lead sent you in the **URL** tab.
+2. Open the **URL** tab and paste `https://github.com/Arshgsgsy/building_segment`.
 3. Choose where to put it under **Local path** (for example your Documents folder) and click **Clone**.
 
-You now have a folder called `sanborn_labeling` on your computer. This README is in it.
+You now have a folder called `building_segment` on your computer. This README is in it.
 
 ### Step 3. Put the sheet images in place
 
@@ -128,7 +129,7 @@ The map images (`.jp2` files, about 10 MB each) are too big for Git, so the proj
 separately (for example a Google Drive folder or a zip file).
 
 1. Download the `.jp2` file of your sheet (or all 8, that's fine too). If it is a zip, unzip it.
-2. Move the `.jp2` files into the folder **`sanborn_labeling/data/raw/`**. Don't rename them.
+2. Move the `.jp2` files into the folder **`building_segment/data/raw/`**. Don't rename them.
    Afterwards that folder holds files like `data/raw/sanborn01500_003_0012.jp2`.
 
 ### Step 4. Install uv (it runs the labeling program)
@@ -169,11 +170,11 @@ It lists the 8 sheets. Your sheet should say `ok` in the **image** column. `MISS
 
 ## Opening a terminal in the project folder
 
-Every command in this README is typed into a terminal that is "in" the `sanborn_labeling` folder.
+Every command in this README is typed into a terminal that is "in" the `building_segment` folder.
 
-- **Windows:** open the `sanborn_labeling` folder in File Explorer, click the address bar at the top, type
+- **Windows:** open the `building_segment` folder in File Explorer, click the address bar at the top, type
   `powershell` and press Enter. (On Windows 11 you can also right-click inside the folder → **Open in Terminal**.)
-- **Mac:** open the **Terminal** app, type `cd ` (with a space after it), drag the `sanborn_labeling` folder from
+- **Mac:** open the **Terminal** app, type `cd ` (with a space after it), drag the `building_segment` folder from
   Finder into the Terminal window, and press Enter.
 - **GitHub Desktop** can do it for you: **Repository → Open in Command Prompt / Terminal**.
 
