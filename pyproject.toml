@@ -1,0 +1,32 @@
+[project]
+name = "sanborn-labeling"
+version = "1.0.0"
+description = "Label buildings on Sanborn fire insurance maps: merge pre-cut regions into buildings in the browser"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy",
+    "scipy",
+    "opencv-python",
+    "shapely",
+    "pillow",
+    "pyyaml",
+]
+
+# Short commands: `uv run label <sheet>`, `uv run dissolve <sheet>`, `uv run sheets`
+[project.scripts]
+label = "sanborn.labeltool:main"
+dissolve = "sanborn.labels:dissolve_main"
+sheets = "sanborn.status:main"
+
+[dependency-groups]
+dev = ["pytest"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sanborn"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

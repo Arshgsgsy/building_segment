@@ -1,0 +1,1247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sanborn labeling</title>
+<style>
+  :root { --panel: #1d1f23; --line: #33363b; --text: #e6e6e6; --muted: #9aa0a6;
+          --unchecked: #00d5ff; --checked: #2ecc71; --flag: #ff9f1a; --suspect: #ff4fa3; --warn: #ff3b30;
+          --extent: #4da3ff; --ignore: #ffd400; --final: #e040fb; --wall: #b6ff00; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #111; color: var(--text);
+               font: 13px/1.45 -apple-system, system-ui, sans-serif; }
+  #map { position: absolute; left: 0; top: 0; width: calc(100% - 300px); height: 100%; }
+  #panel { position: absolute; top: 0; right: 0; bottom: 0; width: 300px; box-sizing: border-box;
+           padding: 12px 14px 20px; background: var(--panel); overflow-y: auto; }
+  body.collapsed #panel { display: none; } body.collapsed #map, body.collapsed .overmap { width: 100%; }
+  .overmap { position: absolute; left: 0; width: calc(100% - 300px); pointer-events: none; z-index: 2; }
+  h1 { font-size: 14px; margin: 0; word-break: break-all; }
+  .badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 3px;
+           margin-top: 4px; letter-spacing: .03em; }
+  .badge.train { background: #2b4c7e; } .badge.test { background: #7e2b5c; }
+  .pill { margin: 10px 0; padding: 6px 10px; border-radius: 5px; font-weight: 600; }
+  .pill.ok { background: #1f4d33; } .pill.busy { background: #6b5316; } .pill.bad { background: #8e1f17; }
+  ol#steps { margin: 6px 0 10px; padding-left: 20px; } ol#steps li { margin: 3px 0; }
+  ol#steps li.done { color: var(--muted); } ol#steps li .n { font-weight: 600; }
+  code { background: #2b2e33; padding: 1px 4px; border-radius: 3px; font-size: 11px; word-break: break-all; }
+  button { background: #2b2e33; color: var(--text); border: 1px solid #3a3d42; border-radius: 4px;
+           cursor: pointer; font: inherit; padding: 2px 8px; }
+  .bar { height: 8px; background: #2b2e33; border-radius: 4px; overflow: hidden; margin: 4px 0 2px; }
+  .bar div { height: 100%; background: var(--checked); width: 0; }
+  #bcard { margin: 10px 0; padding: 8px 10px; background: #26292e; border-radius: 6px; min-height: 36px; }
+  #bcard .title { font-weight: 600; margin-bottom: 4px; }
+  .keys { color: var(--muted); font-size: 12px; } .keys b { color: var(--text); font-weight: 600; }
+  #tools .grp { margin: 8px 0 2px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  #tools .row { display: flex; flex-wrap: wrap; gap: 4px; }
+  #tools button { padding: 3px 7px; font-size: 12px; }
+  #tools button:hover:not(:disabled) { background: #3a3e45; }
+  #tools button:disabled { opacity: .4; cursor: default; }
+  #tools button.on { background: #1d5b78; border-color: var(--unchecked); }
+  #tools button.go { background: #1f4d33; border-color: var(--checked); }
+  #tools kbd { font: 10px/1 -apple-system, system-ui, sans-serif; color: var(--muted); margin-left: 4px; }
+  details { margin: 6px 0; border-top: 1px solid var(--line); padding-top: 6px; }
+  summary { cursor: pointer; color: var(--muted); }
+  details .keys div, details p { margin: 4px 0; }
+  table { width: 100%; border-collapse: collapse; } td { padding: 1px 0; }
+  td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+  .legend div { margin: 3px 0; font-size: 12px; color: var(--muted); }
+  .legend span { display: inline-block; width: 14px; height: 10px; margin-right: 6px; vertical-align: -1px;
+                 border-radius: 2px; box-sizing: border-box; }
+  #banner { top: 0; background: #c0392b; color: #fff; padding: 10px 14px; display: none; font-weight: 600;
+            pointer-events: auto; }
+  #banner code { background: rgba(0,0,0,.25); color: #fff; }
+  #modebar { top: 0; padding: 8px 14px; display: none; font-weight: 600; color: #000; }
+  #card { top: 48px; display: flex; justify-content: center; }
+  #card > div { background: rgba(20,20,20,.93); border: 2px solid var(--flag); border-radius: 8px;
+                padding: 8px 14px; max-width: 560px; display: none; pointer-events: auto; }
+  #card b.k { background: #fff; color: #000; border-radius: 3px; padding: 0 5px; margin: 0 2px; }
+  #center { top: 40%; display: flex; justify-content: center; }
+  #center > div { background: rgba(20,20,20,.9); border: 2px solid var(--extent); border-radius: 8px;
+                  padding: 12px 18px; font-size: 15px; display: none; }
+  #toast { bottom: 44px; display: flex; justify-content: center; }
+  #toast > div { padding: 6px 12px; border-radius: 4px; display: none; color: #fff; }
+  #toast .err { background: #c0392b; } #toast .info { background: #444a52; } #toast .ok { background: #1e8449; }
+  #find { width: 100%; box-sizing: border-box; margin: 8px 0 2px; padding: 4px 8px; background: #2b2e33; color: var(--text);
+          border: 1px solid #3a3d42; border-radius: 4px; font: inherit; }
+  #find:focus { outline: none; border-color: var(--unchecked); }
+  #hint { position: absolute; left: 10px; bottom: 10px; background: rgba(0,0,0,.7); padding: 4px 8px;
+          border-radius: 4px; pointer-events: none; z-index: 2; display: none; }
+  @media (max-width: 900px) {
+    #panel { width: 240px; } #map, .overmap { width: calc(100% - 240px); }
+  }
+</style>
+</head>
+<body>
+<canvas id="map"></canvas>
+<div id="banner" class="overmap"></div>
+<div id="modebar" class="overmap"></div>
+<div id="card" class="overmap"><div></div></div>
+<div id="center" class="overmap"><div></div></div>
+<div id="toast" class="overmap"><div></div></div>
+<div id="hint"></div>
+<div id="panel">
+  <h1 id="title">loading…</h1>
+  <span id="split" class="badge"></span>
+  <input id="find" type="text" inputmode="numeric" autocomplete="off" placeholder="Go to region #  ( / )">
+  <div id="pill" class="pill busy">loading</div>
+  <ol id="steps"></ol>
+  <div id="progtext"></div>
+  <div class="bar"><div id="barfill"></div></div>
+  <div id="bcard"></div>
+  <div id="tools"></div>
+  <details>
+    <summary>Attached-part rule</summary>
+    <p>An attached part (porch, wing, den, addition, shed) is <b>its own building</b> when it is closed by a
+       full-weight wall <b>and</b> has its own construction color or story number.</p>
+    <p>It <b>belongs to the main building</b> when it is only separated by a thin line inside the main
+       outline. Galleries and awnings are their own buildings; water tanks and cisterns are dropped.
+       Full rule: <code>docs/attached_part_rule.md</code>.</p>
+  </details>
+  <details>
+    <summary>All keys</summary>
+    <div class="keys">
+      <div><b>click</b> select a region and its building · <b>Space</b> building done → next unchecked</div>
+      <div><b>shift+click</b> add a touching region to the selected building, or take one of its regions out</div>
+      <div><b>shift+drag</b> add every touching region the stroke passes over</div>
+      <div><b>shift+alt+click</b> join two whole buildings</div>
+      <div><b>D</b> drop / restore the selected building (or the region under the mouse)
+           · <b>alt+click</b> drop / restore one region</div>
+      <div><b>Delete</b> reset the selected building: its regions go back to unchecked, separate and not dropped</div>
+      <div><b>N</b> next item in the review queue · <b>K</b> keep it · <b>B</b> mark everything on screen checked</div>
+      <div><b>O</b> show / hide the final outlines (what training sees, from the last dissolve)
+           · <b>W</b> draw a wall on the selected building where its final outline is wrong · <b>X</b> flip
+           which side of its last wall stays</div>
+      <div><b>C</b> cut a missed wall · <b>E</b> extent · <b>I</b> ignore box · <b>Enter</b> finish
+           (<b>shift+Enter</b> keeps drawing) · <b>Esc</b> cancel</div>
+      <div><b>/</b> go to a region by its number (the number shown when you point at a region)</div>
+      <div><b>drag</b> pan · <b>wheel / pinch</b> zoom · <b>F</b> fit sheet · <b>T</b> view: states / colors / map
+           · <b>H</b> (hold) hide overlays · <b>Tab</b> hide this panel · <b>⌘Z</b> undo</div>
+    </div>
+  </details>
+  <details>
+    <summary>Log</summary>
+    <table id="log"></table>
+  </details>
+  <div class="legend" style="margin-top:10px">
+    <div><span style="border:2px solid var(--unchecked)"></span>not checked yet</div>
+    <div><span style="border:2px solid var(--checked)"></span>checked · <span style="border:2px solid var(--checked);background:rgba(46,204,113,.35)"></span>merged (×n)</div>
+    <div><span style="background:repeating-linear-gradient(45deg,#c0392b 0 3px,transparent 3px 6px);border:1px solid #c0392b"></span>dropped
+         · <span style="background:repeating-linear-gradient(45deg,#000 0 3px,var(--ignore) 3px 6px)"></span>ignore</div>
+    <div><span style="border:2px solid var(--flag)"></span>flagged · <span style="border:2px dashed var(--suspect)"></span>suspect
+         · <span style="border:2px dashed var(--warn)"></span>warning</div>
+    <div><span style="border:2px solid var(--extent)"></span>extent (outside is dimmed and locked)</div>
+    <div><span style="border:2px solid var(--final)"></span>final outline (O) · <span style="border:2px dashed var(--warn)"></span>changed since dissolve
+         · <span style="background:var(--wall);height:3px"></span>drawn wall</div>
+  </div>
+</div>
+<script>
+"use strict";
+const canvas = document.getElementById("map"), ctx = canvas.getContext("2d");
+const $ = (id) => document.getElementById(id);
+const TARGET = 100;                       // buildings per training sheet (docs/decisions.md)
+
+// ---------- state ----------
+let S, ready = false;                     // sheet: name, epoch, width, height, tile, levels, split, city
+const regions = new Map();                // id -> {id, rings, path, bbox, cx, cy, flag, suspect, share, area}
+const adj = new Map();                    // id -> Set of regions within merge reach (server-computed)
+let groups = new Map(), drop = new Set(), reviewed = new Set(), checked = new Set(), accepted = new Set();
+let extents = [], ignore = [], walls = [], activeSeconds = 0, nCuts = 0;
+let showFinal = false, finalAt = null;    // final view (O): the last dissolve's buildings with the walls applied
+const finals = new Map(), finalOf = new Map();  // building id -> {id, regions, rings, path, bbox}; region -> building id
+let rev = 0, dirty = false, stale = false, saving = false, saveAgain = false, changes = 0;
+let retryTimer = null, saveTimer = null, busy = false;   // busy: a cut or uncut is on its way to the server
+const view = {x: 0, y: 0, s: 0.1};        // screen = (sheet - view.xy) * view.s
+let sel = null, mode = "select", draft = [], selPoly = null, hidden = false, look = "state", hover = null;
+let drag = null, stroke = null, lastInput = Date.now(), current = null;
+let clickAs = "select";                   // sidebar "Click does": select · merge (shift+click) · join (shift+alt+click) · drop (alt+click)
+let B = new Map();                        // building key -> member ids (not dropped, inside the extents)
+let warnings = [];
+const undoStack = [];
+
+// ---------- loading ----------
+async function load() {
+  S = await (await fetch("/api/state")).json();
+  for (const r of S.regions) addRegion(r);
+  for (const [k, v] of Object.entries(S.adjacent)) adj.set(+k, new Set(v));
+  const e = S.edits || {};
+  groups = new Map(Object.entries(e.groups || {}).map(([k, v]) => [+k, v]));
+  drop = new Set(e.drop || []); reviewed = new Set(e.reviewed || []);
+  checked = new Set(e.checked || []); accepted = new Set(e.accepted || []);
+  extents = e.extents || []; ignore = e.ignore || []; walls = e.walls || [];
+  activeSeconds = e.active_seconds || 0; rev = e.rev || 0; nCuts = S.cuts;
+  $("title").textContent = S.sheet;
+  $("split").textContent = S.split === "test" ? `TEST · ${S.city} · whole sheet` : `TRAINING · ${S.city} · whole sheet`;
+  $("split").className = "badge " + S.split;
+  ready = true;
+  placeRegions(); fit(); update(); pill("ok", "Saved");
+}
+
+function ringsPath(rings) {
+  const path = new Path2D();
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const ring of rings) {
+    ring.forEach(([x, y], i) => {
+      i ? path.lineTo(x + .5, y + .5) : path.moveTo(x + .5, y + .5);
+      x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x + 1); y1 = Math.max(y1, y + 1);
+    });
+    path.closePath();
+  }
+  return {path, bbox: [x0, y0, x1, y1]};
+}
+function addRegion(r) {
+  const {path, bbox} = ringsPath(r.rings), [x0, y0, x1, y1] = bbox;
+  const reg = {...r, path, bbox, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, share: 1};
+  reg.area = (x1 - x0) * (y1 - y0);
+  regions.set(r.id, reg);
+}
+
+// The share of each region that lies inside the extents, sampled on an 8 x 8 grid. Dissolve keeps a
+// building when at least half of it lies inside, so the page uses the same rule per region.
+function placeRegions(list = regions.values()) {
+  for (const r of list) {
+    if (!extents.length) { r.share = 1; continue; }
+    const [x0, y0, x1, y1] = r.bbox;
+    let n = 0, inn = 0;
+    for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) {
+      const x = x0 + (x1 - x0) * (i + .5) / 8, y = y0 + (y1 - y0) * (j + .5) / 8;
+      if (!inRegion(r, x, y)) continue;
+      n++; if (extents.some((p) => inPoly(x, y, p))) inn++;
+    }
+    r.share = n ? inn / n : +extents.some((p) => inPoly(r.cx, r.cy, p));
+  }
+}
+const usable = (r) => r && r.share >= 0.5;  // outside the extents nothing can be edited
+const crossing = (r) => r.share > 0.02 && r.share < 0.98;
+
+// ---------- buildings ----------
+const keyOf = (id) => groups.has(id) ? "g" + groups.get(id) : "r" + id;
+function membersOf(id) {                  // all regions of id's building, dropped ones included
+  if (!groups.has(id)) return [id];
+  const g = groups.get(id), out = [];
+  for (const [r, gg] of groups) if (gg === g && regions.has(r)) out.push(r);
+  return out;
+}
+function newGroup() { let m = 0; for (const g of groups.values()) m = Math.max(m, g); return m + 1; }
+function setGroup(ids, prefer) {
+  const g = groups.get(prefer) ?? newGroup();
+  for (const r of ids) groups.set(r, g);
+  if (ids.length < 2) for (const r of ids) groups.delete(r);
+}
+function takeOut(id) {
+  if (!groups.has(id)) return;
+  const rest = membersOf(id).filter((r) => r !== id);
+  groups.delete(id);
+  if (rest.length === 1) groups.delete(rest[0]);
+}
+const touches = (a, b) => a.some((x) => b.some((y) => adj.get(x)?.has(y)));
+function pieces(ids) {                    // number of connected parts of a set of regions
+  const left = new Set(ids); let n = 0;
+  while (left.size) {
+    n++; const todo = [left.values().next().value]; left.delete(todo[0]);
+    while (todo.length) for (const y of adj.get(todo.pop()) || []) if (left.delete(y)) todo.push(y);
+  }
+  return n;
+}
+function centroid(ids) {
+  let x = 0, y = 0, w = 0;
+  for (const id of ids) { const r = regions.get(id); x += r.cx * r.area; y += r.cy * r.area; w += r.area; }
+  return [x / w, y / w];
+}
+
+// Everything derived from the edits: buildings and warnings (the review queue builds on them).
+function derive() {
+  B = new Map();
+  for (const r of regions.values()) {
+    if (drop.has(r.id) || !usable(r)) continue;
+    const k = keyOf(r.id);
+    if (!B.has(k)) B.set(k, []);
+    B.get(k).push(r.id);
+  }
+  warnings = [];
+  for (const ids of B.values()) {
+    const sig = [...ids].sort((a, b) => a - b).join(",");
+    if (accepted.has(sig)) continue;
+    if (ids.length > 1 && pieces(ids) > 1) warnings.push({kind: "pieces", ids, sig});
+    else if (extents.length && ids.some((i) => crossing(regions.get(i)))) warnings.push({kind: "edge", ids, sig});
+  }
+}
+function queue() {
+  const items = [];
+  for (const r of regions.values())
+    if (r.flag && usable(r) && !reviewed.has(r.id) && !drop.has(r.id)) items.push({kind: "flag", ids: [r.id], r});
+  for (const r of regions.values())
+    if (!r.flag && r.suspect && usable(r) && !reviewed.has(r.id) && !drop.has(r.id)) items.push({kind: "suspect", ids: [r.id], r});
+  const byPos = (a, b) => regions.get(a.ids[0]).cy - regions.get(b.ids[0]).cy || regions.get(a.ids[0]).cx - regions.get(b.ids[0]).cx;
+  return [...items.sort(byPos), ...warnings.slice().sort(byPos)];
+}
+const needsExtent = () => S.split === "train" && !extents.length;
+const wholeSheet = () => [[0, 0], [S.width - 1, 0], [S.width - 1, S.height - 1], [0, S.height - 1]];
+const isWholeSheet = () => extents.length === 1 && JSON.stringify(extents[0]) === JSON.stringify(wholeSheet());
+
+// One extent over the entire sheet (replacing any drawn ones): label everything on it.
+function useWholeSheet() {
+  if (isWholeSheet()) return toast("The extent already covers the whole sheet.", "info");
+  snapshot();
+  extents = [wholeSheet()]; draft = []; selPoly = null; mode = "select";
+  placeRegions();
+  toast("Extent: the whole sheet. Every region on it is now to be labeled · ⌘Z undoes", "info");
+  changed();
+}
+
+// ---------- edits (each one: snapshot, change, changed) ----------
+function select(id) {
+  sel = id;
+  current = queue().find((q) => q.ids.includes(id)) || null;
+  update();
+}
+
+function shiftClick(id, alt) {
+  if (sel == null || !regions.has(sel)) return select(id);
+  if (drop.has(id)) return toast("That region is dropped. Select it and press D to restore it first.", "err");
+  const cur = membersOf(sel).filter((r) => !drop.has(r));
+  if (alt) {
+    const other = membersOf(id).filter((r) => !drop.has(r));
+    if (cur.includes(id)) return;
+    if (!touches(other, cur)) return toast("Not touching this building: not joined.", "err");
+    snapshot();
+    setGroup([...cur, ...other], sel);
+    for (const r of [...cur, ...other]) { checked.add(r); reviewed.add(r); }
+    toast(`Joined 2 buildings → ${cur.length + other.length} regions · ⌘Z undoes`, "info");
+  } else if (cur.includes(id)) {
+    if (cur.length < 2) return;
+    snapshot();
+    takeOut(id); checked.delete(id);
+    if (id === sel) sel = cur.find((r) => r !== id);
+    toast("Took 1 region out: it is a building on its own again (unchecked) · ⌘Z undoes", "info");
+  } else {
+    if (!touches([id], cur)) return toast("Not touching this building: not merged.", "err");
+    const moved = groups.has(id);
+    snapshot();
+    takeOut(id);
+    setGroup([...cur, id], sel);
+    for (const r of [...cur, id]) { checked.add(r); reviewed.add(r); }
+    toast(`Merged → ${cur.length + 1} regions` + (moved ? " (moved from another building)" : "") + " · ⌘Z undoes", "info");
+  }
+  changed();
+}
+
+function strokeMerge(ids) {
+  ids = [...new Set(ids)].filter((i) => !drop.has(i) && usable(regions.get(i)));
+  if (ids.length < 2) return false;
+  const cur = membersOf(ids[0]).filter((r) => !drop.has(r));
+  const pending = ids.filter((i) => !cur.includes(i)), added = [];
+  for (let grew = true; grew;) {          // add regions that touch the growing building, in any order
+    grew = false;
+    for (const i of [...pending]) if (touches([i], cur)) { cur.push(i); added.push(i); pending.splice(pending.indexOf(i), 1); grew = true; }
+  }
+  if (!added.length) { toast("Nothing under the stroke touches that building: not merged.", "err"); return true; }
+  snapshot();
+  for (const i of added) takeOut(i);
+  setGroup(cur, ids[0]);
+  for (const r of cur) { checked.add(r); reviewed.add(r); }
+  sel = ids[0];
+  toast(`Merged → ${cur.length} regions` + (pending.length ? `; ${pending.length} not touching, left alone` : "") + " · ⌘Z undoes", "info");
+  changed();
+  return true;
+}
+
+function dropToggle(ids) {
+  snapshot();
+  const all = ids.every((i) => drop.has(i));
+  for (const i of ids) { all ? drop.delete(i) : drop.add(i); reviewed.add(i); checked.add(i); }
+  toast(`${all ? "Restored" : "Dropped"} ${ids.length} region${ids.length > 1 ? "s" : ""} · ⌘Z undoes`, "info");
+  changed();
+  return !all;
+}
+
+// Delete: start the building over. Its regions go back to being unchecked, separate, not dropped,
+// and flagged or suspect ones return to the review queue.
+function resetBuilding() {
+  if (sel == null || !regions.has(sel)) return toast("Select a building first.", "info");
+  const ids = membersOf(sel);
+  snapshot();
+  for (const r of ids) { groups.delete(r); drop.delete(r); checked.delete(r); reviewed.delete(r); }
+  current = queue().find((q) => q.ids.includes(sel)) || null;
+  toast(`Reset: ${ids.length} region${ids.length > 1 ? "s" : ""} back to unchecked, on their own · ⌘Z undoes`, "info");
+  changed();
+}
+
+// Space: this building is done, go to the nearest unchecked region.
+function confirmAndNext() {
+  if (needsExtent()) return toast("Draw an extent first: press E.", "err");
+  let from = [view.x + canvas.clientWidth / 2 / view.s, view.y + canvas.clientHeight / 2 / view.s];
+  if (sel != null && regions.has(sel) && usable(regions.get(sel))) {
+    const ids = membersOf(sel);
+    snapshot();
+    for (const r of ids) { checked.add(r); reviewed.add(r); }
+    from = centroid(ids);
+  }
+  let best = null, bd = Infinity;
+  for (const r of regions.values()) {
+    if (!usable(r) || drop.has(r.id) || checked.has(r.id)) continue;
+    const d = (r.cx - from[0]) ** 2 + (r.cy - from[1]) ** 2;
+    if (d < bd) { bd = d; best = r; }
+  }
+  if (!best) { sel = null; current = null; toast("Every region inside the extents is checked.", "ok"); return changed(); }
+  sel = best.id; current = queue().find((q) => q.ids.includes(best.id)) || null;
+  panTo(best);
+  changed();
+}
+
+function nextInQueue(keep) {
+  if (needsExtent()) return toast("Draw an extent first: press E.", "err");
+  let q = queue(), at = current ? q.findIndex((i) => i.ids[0] === current.ids[0]) : -1;
+  if (keep && current) {
+    snapshot();
+    if (current.kind === "flag" || current.kind === "suspect") reviewed.add(current.ids[0]);
+    else accepted.add(current.sig);
+    derive(); q = queue();                // the kept item left the queue, so `at` now points at the next one
+  } else at++;
+  showQueueItem(q, at);
+  keep ? changed() : update();
+}
+function showQueueItem(q, at) {
+  if (!q.length) { current = null; sel = null; return toast("The review queue is empty.", "ok"); }
+  current = q[Math.max(0, at) % q.length];
+  sel = current.ids[0];
+  centerOn(current.ids);
+}
+
+// ---------- final outlines (O) and drawn walls (W) ----------
+// The final outlines come from the last dissolve (fitted.png), with this tab's walls applied by the
+// server. A building whose merges changed since then is out of date: no wall can be drawn on it
+// until dissolve runs again.
+const finalFor = (id) => finals.get(finalOf.get(id));
+function finalStale(f) {
+  const r0 = f.regions[0];
+  if (r0 == null || !regions.has(r0)) return true;
+  const cur = membersOf(r0).filter((r) => !drop.has(r));
+  return cur.length !== f.regions.length || f.regions.some((r) => !cur.includes(r));
+}
+const usableFinal = (f) => f.regions.some((r) => regions.has(r) && usable(regions.get(r)));
+function removeFinal(b) {
+  const f = finals.get(b);
+  if (!f) return;
+  for (const r of f.regions) if (finalOf.get(r) === b) finalOf.delete(r);
+  finals.delete(b);
+}
+function takeFinal(d, ids) {
+  if (ids == null) { finals.clear(); finalOf.clear(); }
+  for (const b of d.gone || []) removeFinal(b);
+  for (const f of d.buildings) {
+    removeFinal(f.id);
+    finals.set(f.id, {...f, ...ringsPath(f.rings)});
+    for (const r of f.regions) finalOf.set(r, f.id);
+  }
+  finalAt = d.dissolved;
+}
+async function getFinal(ws, ids) {
+  let r, d;
+  try { r = await post("/api/final", {walls: ws, ids}); d = await r.json(); }
+  catch { toast("Can't reach the server: final outlines not loaded.", "err"); return null; }
+  if (r.status === 409) { markStale(); return null; }
+  if (!r.ok) { toast(d.error, "err"); return null; }
+  return d;
+}
+const restorePill = () => dirty ? pill("busy", "Saving…") : pill("ok", "Saved");
+const dissolveCmd = () => `uv run dissolve ${S.sheet}`;
+
+async function toggleFinal(on = !showFinal) {
+  if (!on) {
+    showFinal = false; if (mode === "wall") { mode = "select"; draft = []; }
+    toast("Final outlines hidden.", "info"); update(); return true;
+  }
+  busy = true; pill("busy", "Loading final outlines…");
+  let d;
+  try { d = await getFinal(walls, null); } finally { busy = false; }
+  restorePill();
+  if (!d) return false;
+  if (!d.available) { toast(`No final outlines yet: run ${dissolveCmd()} in a terminal, then press O.`, "err"); return false; }
+  takeFinal(d, null);
+  showFinal = true;
+  const n = [...finals.values()].filter((f) => usableFinal(f) && finalStale(f)).length;
+  const when = new Date(finalAt * 1000).toLocaleString([], {month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"});
+  toast(n ? `Final outlines from the dissolve of ${when}. ${n} buildings changed since (red dashes): run dissolve again, then press O twice.`
+          : `Final outlines from the dissolve of ${when}. Select a building and press W to fix a wall.`, n ? "err" : "info");
+  update();
+  return true;
+}
+
+// Send a new wall list; the server answers with the new outlines of `ids` and what each wall changed.
+// Wall `i` (the one just drawn or flipped) must change something, otherwise nothing is kept.
+async function setWalls(ws, ids, i, emptyMsg, okMsg) {
+  busy = true; pill("busy", "Applying the wall…");
+  let d;
+  try {
+    d = await getFinal(ws, ids);
+    if (d && d.available && d.dissolved !== finalAt) { ids = null; d = await getFinal(ws, null); }  // a new dissolve ran
+  } finally { busy = false; }
+  restorePill();
+  if (!d) return false;
+  if (!d.available) { toast(`The final outlines are gone: run ${dissolveCmd()} again.`, "err"); return false; }
+  if (i != null && !d.results[i]) {
+    toast(emptyMsg, "err");
+    if (ids == null) toggleFinal(true);   // reload what the new dissolve gives with the walls as they were
+    return false;
+  }
+  snapshot(); walls = ws; takeFinal(d, ids);
+  toast(okMsg + " · ⌘Z undoes", "info");
+  changed();
+  return true;
+}
+const lastWallOf = (f) => { for (let j = walls.length - 1; j >= 0; j--) if (finalOf.get(walls[j].region) === f.id) return j; return -1; };
+function wallTarget() {
+  if (sel == null || !regions.has(sel) || drop.has(sel)) { toast("Select a building first.", "info"); return null; }
+  const f = finalFor(sel);
+  if (!f) { toast(`This building has no final outline: run ${dissolveCmd()} again, then press O twice.`, "err"); return null; }
+  if (finalStale(f)) { toast(`This building's merges changed since the last dissolve: run ${dissolveCmd()} again, then press O twice.`, "err"); return null; }
+  return f;
+}
+async function startWall() {
+  if (mode === "wall") return setMode("wall");
+  if (!showFinal && !(await toggleFinal(true))) return;
+  if (wallTarget()) setMode("wall");
+}
+function flipWall() {
+  if (!showFinal) return toast("X flips a drawn wall: press O to show the final outlines first.", "info");
+  const f = wallTarget(); if (!f) return;
+  const j = lastWallOf(f);
+  if (j < 0) return toast("The selected building has no drawn wall to flip.", "info");
+  const ws = walls.map((w, k) => k === j ? {...w, flip: !w.flip} : w);
+  setWalls(ws, [f.id], j, "Nothing to flip: that wall only fills in, there is no part on its other side.", "Flipped: the other side stays");
+}
+function removeWall() {
+  const f = wallTarget(); if (!f) return;
+  const j = lastWallOf(f);
+  if (j < 0) return toast("The selected building has no drawn wall to remove.", "info");
+  setWalls(walls.filter((_, k) => k !== j), [f.id], null, "", "Removed the building's last wall");
+}
+
+// ---------- saving and undo ----------
+function update() {
+  if (!ready) return;
+  derive();
+  renderPanel();
+  renderOverlays();
+  draw();
+}
+function changed() { changes++; dirty = true; update(); clearTimeout(saveTimer); saveTimer = setTimeout(save, 400); pill("busy", "Saving…"); }
+const editsBody = () => ({groups: Object.fromEntries(groups), drop: [...drop], reviewed: [...reviewed],
+                          checked: [...checked], accepted: [...accepted], extents, ignore, walls,
+                          active_seconds: activeSeconds, rev});
+// every request names the sheet and its label folder (epoch), so a tab left over from another
+// sheet or from a reset folder is refused
+const post = (url, body) => fetch(url, {method: "POST", body: JSON.stringify({...body, sheet: S.sheet, epoch: S.epoch})});
+
+// The server only accepts a save built on the version it has (rev), so a stale tab can't overwrite
+// newer edits. One save at a time: a change made meanwhile is sent right after.
+async function save() {
+  if (!ready || stale) return;
+  if (saving) { saveAgain = true; return; }
+  clearTimeout(retryTimer);
+  saving = true; saveAgain = false;
+  const sent = changes;
+  let status, reply;
+  try {
+    const r = await post("/api/edits", editsBody());
+    status = r.status; reply = await r.json();
+    if (r.ok) rev = reply.rev;
+  } catch {
+    status = 0;
+  } finally { saving = false; }
+  if (status === 409) return markStale();
+  if (status !== 200) {
+    pill("bad", status ? "NOT SAVED: server error" : "NOT SAVED: server not running");
+    banner(status ? `Not saved: the server answered "${reply?.error || status}". See its terminal; retrying.`
+                  : `Not saved: the labeling server isn't running. Start it again with
+                     <code>uv run label ${S.sheet}</code>. Your changes stay in this tab
+                     and are saved as soon as it is back.`);
+    retryTimer = setTimeout(save, 3000);
+    return;
+  }
+  banner(null);
+  if (changes === sent) { dirty = false; pill("ok", "Saved " + new Date().toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"})); }
+  if (saveAgain || changes !== sent) save();
+}
+function markStale() {
+  stale = true;
+  pill("bad", "NOT SAVED: tab out of date");
+  banner(`This tab is out of date: the sheet was changed from somewhere else (another tab, another
+          server, or the label folder was reset). Nothing more is saved from here. Reload the page to continue.`);
+}
+function pill(kind, text) { $("pill").className = "pill " + kind; $("pill").textContent = text; }
+function banner(html) { $("banner").innerHTML = html || ""; $("banner").style.display = html ? "block" : "none"; }
+function toast(text, kind = "info") {
+  const el = $("toast").firstElementChild;
+  el.textContent = text; el.className = kind; el.style.display = "block";
+  clearTimeout(toast.t); toast.t = setTimeout(() => el.style.display = "none", kind === "err" ? 4000 : 2500);
+}
+addEventListener("beforeunload", (e) => { if (dirty && !stale) e.preventDefault(); });
+addEventListener("pagehide", () => {
+  if (dirty && !stale && !saving) navigator.sendBeacon("/api/edits", JSON.stringify({...editsBody(), sheet: S.sheet, epoch: S.epoch}));
+});
+
+function snapshot(kind = "edit") {
+  undoStack.push({kind, sel, groups: new Map(groups), drop: new Set(drop), reviewed: new Set(reviewed),
+                  checked: new Set(checked), accepted: new Set(accepted), extents: extents.slice(), ignore: ignore.slice(),
+                  walls: walls.slice()});
+  if (undoStack.length > 500) undoStack.shift();
+}
+async function undo() {
+  const u = undoStack[undoStack.length - 1];
+  if (!u) return toast("Nothing to undo (the undo history starts when the page loads).", "info");
+  if (u.kind === "cut") {
+    busy = true;
+    let r, d;
+    try { r = await post("/api/uncut", {cuts: nCuts}); d = await r.json(); }
+    catch { return toast("Can't reach the server: the cut was not undone.", "err"); }
+    finally { busy = false; }
+    if (r.status === 409) return markStale();
+    if (!r.ok) return toast(d.error, "err");
+    applyRegionChange(d); nCuts--;
+  }
+  undoStack.pop();
+  const before = walls;
+  ({groups, drop, reviewed, checked, accepted, extents, ignore, walls, sel} = u);
+  if (!regions.has(sel)) sel = null;
+  current = null;
+  placeRegions();
+  toast("Undone.", "info");
+  changed();
+  if (showFinal && JSON.stringify(before) !== JSON.stringify(walls)) {   // redraw the buildings whose walls changed
+    const ids = [...new Set([...before, ...walls].map((w) => finalOf.get(w.region)).filter((b) => b != null))];
+    busy = true;
+    let d;
+    try { d = await getFinal(walls, ids); } finally { busy = false; }
+    if (d && d.available) { takeFinal(d, d.dissolved === finalAt ? ids : null); draw(); }
+  }
+}
+function applyRegionChange(d) {
+  // pieces of a cut keep their parent's building and drop state; the labeler then takes out the wrong piece
+  for (const a of d.added) if (d.removed.includes(a.parent)) {
+    if (groups.has(a.parent)) groups.set(a.id, groups.get(a.parent));
+    if (drop.has(a.parent)) drop.add(a.id);
+  }
+  for (const id of d.removed) {
+    regions.delete(id); groups.delete(id); drop.delete(id); reviewed.delete(id); checked.delete(id);
+    for (const n of adj.get(id) || []) adj.get(n)?.delete(id);
+    adj.delete(id);
+  }
+  for (const r of d.added) addRegion(r);
+  for (const [k, v] of Object.entries(d.adjacent)) {
+    adj.set(+k, new Set(v));
+    for (const n of v) { if (!adj.has(n)) adj.set(n, new Set()); adj.get(n).add(+k); }
+  }
+  placeRegions(d.added.map((a) => regions.get(a.id)));
+}
+
+// ---------- panel and overlays ----------
+function renderPanel() {
+  const q = queue();
+  let unchecked = 0, done = 0, kept = 0;
+  for (const r of regions.values()) if (usable(r) && !drop.has(r.id)) { kept++; if (!checked.has(r.id)) unchecked++; }
+  for (const ids of B.values()) if (ids.every((i) => checked.has(i))) done++;
+  const train = S.split === "train";
+  const step = (ok, html) => `<li class="${ok ? "done" : ""}">${ok ? "✓ " : ""}${html}</li>`;
+  const finished = !needsExtent() && !q.length && !unchecked;
+  $("steps").innerHTML = [
+    train ? step(extents.length, isWholeSheet() ? "Extent: the whole sheet"
+                 : extents.length ? `Extent drawn (${extents.length}) · <button class="whole">Use whole sheet</button>`
+                 : `<span class="n">Click</span> <button class="whole">Use whole sheet</button> (this project labels every sheet whole)`)
+          : step(true, "Whole sheet (test city): no extent"),
+    step(!needsExtent() && !q.length, q.length ? `<span class="n">Review queue: ${q.length} left</span> (<b>N</b>)` : "Review queue done"),
+    step(!needsExtent() && !unchecked, unchecked ? `<span class="n">Merge and check: ${unchecked} unchecked regions</span> (<b>Space</b>)` : "Every region checked"),
+    step(false, finished ? `Run <code>uv run dissolve ${S.sheet}</code> <button id="copy">copy</button>`
+                         : "Then run dissolve"),
+  ].join("");
+  if ($("copy")) $("copy").onclick = () => { navigator.clipboard.writeText(`uv run dissolve ${S.sheet}`); toast("Copied.", "ok"); };
+
+  const partial = train && extents.length > 0 && !isWholeSheet();  // an extent smaller than the sheet: the old ~100-building target
+  const total = B.size, goal = partial ? TARGET : Math.max(total, 1);
+  $("progtext").innerHTML = partial ? `Checked buildings <b>${done}</b> / ${TARGET} <span class="keys">(${total} inside the extents)</span>`
+                                    : `Checked buildings <b>${done}</b> of ${total}`;
+  $("barfill").style.width = Math.min(100, 100 * done / goal) + "%";
+
+  // the selected building and the keys that make sense right now
+  let card;
+  if (mode !== "select") card = `<div class="title">${{cut: "Cutting", extent: "Drawing an extent", ignore: "Drawing an ignore box", wall: "Drawing a wall"}[mode]}</div>`
+                                + (mode === "extent" ? `<div style="margin:6px 0"><button class="whole">Use whole sheet</button></div>` : "");
+  else if (sel != null && regions.has(sel)) {
+    const ids = membersOf(sel), r = regions.get(sel);
+    const state = drop.has(sel) ? "dropped" : ids.every((i) => checked.has(i)) ? "checked" : "not checked";
+    card = `<div class="title">${ids.length > 1 ? `Building of ${ids.length} regions` : "Single-region building"} · ${state}</div>`
+         + (r.flag ? `<div>flagged: ${r.flag}</div>` : "") + (r.suspect && !r.flag ? "<div>suspect: a wall may run through it</div>" : "")
+         + `<div style="margin:6px 0"><button id="reset">Reset building (Delete)</button></div>`;
+  } else card = `<div class="title">Nothing selected</div>`;
+  const keys = {
+    select: (sel != null ? "<b>Shift+click</b> add / take out a part · <b>Shift+drag</b> add parts · <b>Space</b> done → next · <b>D</b> drop · <b>Delete</b> start over · <b>⌘Z</b> undo"
+                         : "<b>Click</b> a region · <b>Space</b> next unchecked · <b>N</b> review queue")
+            + (showFinal ? " · <b>O</b> hide final outlines" + (sel != null ? " · <b>W</b> draw a wall · <b>X</b> flip its last wall" : "") : " · <b>O</b> final outlines"),
+    wall: "Click points along the <b>outside edge</b> of the real wall, starting and ending on the building's final outline. Across the building: the smaller side goes. Out and back: the gap fills in. · <b>Enter</b> apply · <b>X</b> flip the side · <b>Backspace</b> remove a point (none drawn: the building's last wall) · <b>Esc</b> cancel",
+    cut: "Click points across the missed wall · <b>Enter</b> apply · <b>Backspace</b> remove point · <b>Esc</b> cancel",
+    extent: "Click corners along street centerlines · <b>Enter</b> close · click inside one + <b>Delete</b> removes it · <b>Esc</b> cancel",
+    ignore: "Click 2 corners + <b>Enter</b> for a box (or more corners) · click inside one + <b>Delete</b> removes it · <b>Esc</b> cancel",
+  }[mode];
+  $("bcard").innerHTML = card + `<div class="keys">${keys}</div>`;
+  if ($("reset")) $("reset").onclick = (e) => { e.currentTarget.blur(); resetBuilding(); };
+  document.querySelectorAll(".whole").forEach((b) => b.onclick = (e) => { e.currentTarget.blur(); useWholeSheet(); });
+
+  renderTools();
+
+  $("log").innerHTML = [["Regions kept / dropped", `${kept} / ${drop.size}`], ["Cuts", nCuts], ["Drawn walls", walls.length],
+    ["Extents / ignore boxes", `${extents.length} / ${ignore.length}`], ["Active minutes", (activeSeconds / 60).toFixed(1)]]
+    .map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("");
+}
+
+// The sidebar's buttons: the keys that make sense right now, clickable. Each runs command(), like its key.
+function renderTools() {
+  const b = (k, label, kbd, {on = false, off = false, go = false, shift = false, title = ""} = {}) =>
+    `<button data-k="${k}"${shift ? ' data-shift="1"' : ""} class="${on ? "on" : go ? "go" : ""}"${off ? " disabled" : ""}${title ? ` title="${title}"` : ""}>${label}${kbd ? `<kbd>${kbd}</kbd>` : ""}</button>`;
+  const grp = (name, ...btns) => `<div class="grp">${name}</div><div class="row">${btns.join("")}</div>`;
+  const has = sel != null && regions.has(sel), merged = has && membersOf(sel).length > 1;
+  const out = [];
+  if (mode === "select") {
+    out.push(grp(has ? "Selected building" : "Buildings",
+      b(" ", has ? "Done → next" : "Next unchecked", "Space", {go: true}),
+      b("d", has && drop.has(sel) ? "Restore" : "Drop", "D", {off: !has}),
+      b("u", "Take region out", "U", {off: !merged}),
+      b("delete", "Start over", "Del", {off: !has}),
+      b("z", "Undo", "⌘Z", {off: !undoStack.length})));
+    const c = (m, label, title) => `<button data-click="${m}" class="${clickAs === m ? "on" : ""}" title="${title}">${label}</button>`;
+    out.push(`<div class="grp">Click on the map does</div><div class="row">`
+      + c("select", "Select", "plain click")
+      + c("merge", "Add / take out", "like shift+click: add a touching region to the selected building, or take one of its regions out")
+      + c("join", "Join buildings", "like shift+alt+click: join two whole buildings")
+      + c("drop", "Drop region", "like alt+click: drop / restore one region") + `</div>`);
+    out.push(grp("Review", b("n", "Next in queue", "N"), b("k", "Keep it", "K", {off: !current}), b("b", "Check all on screen", "B")));
+    out.push(grp("Draw", b("c", "Cut a wall", "C"), b("e", "Extent", "E"), b("i", "Ignore box", "I"),
+      b("w", "Fix a wall", "W", {off: !has, title: "draw a wall on the selected building's final outline"})));
+  } else {
+    const name = {cut: "Cutting", extent: "Drawing an extent", ignore: "Drawing an ignore box", wall: "Drawing a wall"}[mode];
+    out.push(grp(name,
+      b("enter", "Apply", "Enter", {go: true, off: draft.length < 2}),
+      b("enter", "Apply, keep drawing", "⇧Enter", {shift: true, off: draft.length < 2}),
+      b("backspace", mode === "wall" && !draft.length ? "Remove last wall" : "Remove point", "⌫", {off: !draft.length && mode !== "wall"}),
+      b("escape", "Cancel", "Esc"),
+      ...(mode === "wall" ? [b("x", "Flip side", "X")] : [])));
+  }
+  out.push(grp("View",
+    b("o", showFinal ? "Hide final outlines" : "Final outlines", "O", {on: showFinal}),
+    ...(showFinal && has && mode === "select" ? [b("x", "Flip last wall", "X")] : []),
+    b("t", `Look: ${{state: "states", fill: "colors", map: "map only"}[look]}`, "T"),
+    b("h", "Hide overlays", "H", {on: hidden}),
+    b("f", "Whole sheet", "F"), b("+", "Zoom in", "+"), b("-", "Zoom out", "−")));
+  const html = out.join("");                // only when it changed, so a click in progress isn't lost to a redraw
+  if (renderTools.last !== html) { $("tools").innerHTML = html; renderTools.last = html; }
+}
+$("tools").addEventListener("click", (e) => {
+  const btn = e.target.closest("button");
+  if (!btn || btn.disabled) return;
+  btn.blur();                               // so Space / Enter go to the map, not to the button
+  lastInput = Date.now();
+  if (!ready) return;
+  if (btn.dataset.click) { clickAs = btn.dataset.click; return update(); }
+  const k = btn.dataset.k;
+  if (k === "h") { hidden = !hidden; draw(); return renderPanel(); }  // a button can't be held: it toggles
+  if (k === "z") return command("z", {meta: true, button: true});
+  command(k, {shift: !!btn.dataset.shift, button: true});
+});
+
+function renderOverlays() {
+  const colors = {cut: "#ff3b30", extent: "#4da3ff", ignore: "#ffd400", wall: "#b6ff00"};
+  const text = {cut: "CUT: click points across the missed wall · Enter apply · Backspace remove point · Esc cancel",
+                wall: "WALL: click along the outside edge of the real wall, start and end on the outline · Enter apply · X flip side · Esc cancel",
+                extent: "EXTENT: click corners along street centerlines · Enter close (Shift+Enter: draw another) · Esc cancel",
+                ignore: "IGNORE BOX: click 2 corners + Enter, or more corners + Enter · Esc cancel"};
+  const mb = $("modebar");
+  mb.style.display = mode === "select" ? "none" : "block";
+  mb.style.background = colors[mode] || ""; mb.textContent = text[mode] || "";
+
+  const card = $("card").firstElementChild;
+  if (current && mode === "select" && current.ids.includes(sel)) {
+    const q = queue(), at = q.findIndex((i) => i.ids[0] === current.ids[0]);
+    const pos = at >= 0 ? `<span class="keys"> (${at + 1} of ${q.length})</span>` : "";
+    const k = (x) => `<b class="k">${x}</b>`;
+    const msg = {
+      flag: `<b>Flagged: ${current.r?.flag}</b>. Probably not a building (fire-alarm circle, tank, margin mark, text). ${k("D")} drop · ${k("K")} keep · ${k("N")} skip`,
+      suspect: `<b>Suspect</b>: a straight wall may run through it (two buildings merged?). ${k("C")} cut · ${k("K")} keep · ${k("N")} skip`,
+      pieces: `<b>Building in separate pieces</b>: its regions don't touch. ${k("Shift+click")} a stray region to take it out · ${k("K")} keep · ${k("N")} skip`,
+      edge: `<b>Crosses the extent edge</b>: move the edge onto the street (${k("E")}, click inside, ${k("Delete")}, redraw) · ${k("K")} keep · ${k("N")} skip`,
+    }[current.kind];
+    card.style.borderColor = {flag: "var(--flag)", suspect: "var(--suspect)", pieces: "var(--warn)", edge: "var(--warn)"}[current.kind];
+    card.innerHTML = msg + pos; card.style.display = "block";
+  } else card.style.display = "none";
+
+  const center = $("center").firstElementChild;
+  const blocked = needsExtent() && mode !== "extent";
+  center.innerHTML = blocked ? "First click <b>Use whole sheet</b> in the panel on the right.<br>(This project labels every sheet whole.)" : "";
+  center.style.display = blocked ? "block" : "none";
+}
+
+function hintText() {
+  if (hover == null || !regions.has(hover)) return "";
+  const r = regions.get(hover), ids = membersOf(hover);
+  if (!usable(r)) return `region ${hover} · outside the extents`;
+  return [`region ${hover}`, ids.length > 1 ? `building of ${ids.length}` : "on its own",
+          drop.has(hover) ? "dropped" : checked.has(hover) ? "checked" : "not checked",
+          r.flag ? `flagged ${r.flag}` : r.suspect ? "suspect" : ""].filter(Boolean).join(" · ");
+}
+
+// ---------- drawing ----------
+const tiles = new Map();
+function tileImg(z, x, y) {
+  const k = `${z}/${x}/${y}`;
+  let t = tiles.get(k);
+  if (!t) {
+    t = new Image(); t.onload = () => { t.ready = true; draw(); }; t.src = `/tile/${k}.jpg`;
+    tiles.set(k, t);
+    if (tiles.size > 600) tiles.delete(tiles.keys().next().value);
+  }
+  return t.ready ? t : null;
+}
+function drawLevel(z, x0, y0, x1, y1) {
+  const span = S.tile * 2 ** z;
+  for (let ty = Math.max(0, Math.floor(y0 / span)); ty * span < Math.min(y1, S.height); ty++)
+    for (let tx = Math.max(0, Math.floor(x0 / span)); tx * span < Math.min(x1, S.width); tx++) {
+      const img = tileImg(z, tx, ty);
+      if (img) ctx.drawImage(img, tx * span, ty * span, img.width * 2 ** z, img.height * 2 ** z);
+    }
+}
+function hatch(c1, c2) {
+  const p = document.createElement("canvas"); p.width = p.height = 12;
+  const g = p.getContext("2d");
+  g.fillStyle = c1; g.fillRect(0, 0, 12, 12);
+  g.strokeStyle = c2; g.lineWidth = 3; g.beginPath();
+  for (const o of [-12, 0, 12]) { g.moveTo(o, 12); g.lineTo(o + 12, 0); }
+  g.stroke();
+  return ctx.createPattern(p, "repeat");
+}
+const dropHatch = hatch("rgba(192,57,43,.12)", "rgba(192,57,43,.75)");
+const ignoreHatch = hatch("rgba(255,212,0,.35)", "rgba(0,0,0,.6)");
+const color = (id, alpha) => `hsla(${(id * 137.508) % 360}, 75%, 50%, ${alpha})`;
+
+let pending = false;
+function draw() { if (!pending) { pending = true; requestAnimationFrame(render); } }
+function render() {
+  pending = false;
+  if (!S) return;
+  const dpr = devicePixelRatio || 1, W = canvas.clientWidth, H = canvas.clientHeight;
+  if (canvas.width !== W * dpr || canvas.height !== H * dpr) { canvas.width = W * dpr; canvas.height = H * dpr; }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = "#111"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const s = view.s * dpr;
+  ctx.setTransform(s, 0, 0, s, -view.x * s, -view.y * s);
+  const x0 = view.x, y0 = view.y, x1 = view.x + W / view.s, y1 = view.y + H / view.s;
+  ctx.imageSmoothingEnabled = view.s < 2;
+  drawLevel(S.levels - 1, x0, y0, x1, y1);   // coarsest level under everything, so there are no holes
+  const z = Math.max(0, Math.min(S.levels - 1, Math.floor(Math.log2(1 / view.s))));
+  if (z < S.levels - 1) drawLevel(z, x0, y0, x1, y1);
+  const screen = new DOMMatrix().scale(1 / s);   // hatches keep their size on screen at any zoom
+  dropHatch.setTransform(screen); ignoreHatch.setTransform(screen);
+
+  const px = 1 / view.s;                    // one screen pixel in sheet units
+  if (extents.length) {                     // dim what lies outside the extents
+    const out = new Path2D();
+    out.rect(-1e5, -1e5, 2e5 + S.width, 2e5 + S.height);
+    for (const p of extents) polyPath(p, out);
+    ctx.fillStyle = "rgba(0,0,0,.5)"; ctx.fill(out, "evenodd");
+  }
+  if (!hidden && look !== "map") {
+    if (showFinal) ctx.globalAlpha = 0.35;  // the final outlines are what matters now: regions stay faint
+    drawRegions(x0, y0, x1, y1, px, dpr);
+    ctx.globalAlpha = 1;
+  }
+  if (!hidden && showFinal) drawFinal(x0, y0, x1, y1, px);
+  if (!hidden) {
+    extents.forEach((p, i) => strokePoly(p, "#4da3ff", 2.5 * px, selPoly && selPoly.kind === "extent" && selPoly.i === i));
+    ignore.forEach((p, i) => {
+      const path = polyPath(p); ctx.fillStyle = ignoreHatch; ctx.fill(path);
+      strokePoly(p, "#ffd400", 2 * px, selPoly && selPoly.kind === "ignore" && selPoly.i === i);
+    });
+  }
+  if (draft.length) {
+    const c = {cut: "#ff3b30", extent: "#4da3ff", ignore: "#ffd400", wall: "#b6ff00"}[mode];
+    const pts = mode === "ignore" && draft.length === 2 ? box(draft) : draft;
+    ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x + .5, y + .5) : ctx.moveTo(x + .5, y + .5));
+    if (mode !== "cut" && mode !== "wall" && pts.length > 2) ctx.closePath();
+    ctx.strokeStyle = c; ctx.lineWidth = 2 * px; ctx.setLineDash([6 * px, 4 * px]); ctx.stroke(); ctx.setLineDash([]);
+    for (const [x, y] of draft) { ctx.fillStyle = c; ctx.fillRect(x + .5 - 3 * px, y + .5 - 3 * px, 6 * px, 6 * px); }
+  }
+  if (stroke && stroke.length > 1) {
+    ctx.beginPath(); stroke.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 3 * px; ctx.stroke();
+  }
+  if (mode !== "select") {                  // frame the map in the mode color
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.strokeStyle = {cut: "#ff3b30", extent: "#4da3ff", ignore: "#ffd400", wall: "#b6ff00"}[mode]; ctx.lineWidth = 6 * dpr;
+    ctx.strokeRect(0, 0, canvas.width, canvas.height);
+  }
+}
+
+function drawRegions(x0, y0, x1, y1, px, dpr) {
+  const onScreen = (r) => r.bbox[2] > x0 && r.bbox[0] < x1 && r.bbox[3] > y0 && r.bbox[1] < y1;
+  const visible = [...regions.values()].filter((r) => usable(r) && onScreen(r));
+  const size = (id) => (B.get(keyOf(id)) || [id]).length;
+  for (const r of visible) {
+    if (drop.has(r.id)) { ctx.fillStyle = dropHatch; ctx.fill(r.path, "evenodd"); continue; }
+    if (look === "fill") { ctx.fillStyle = color(Math.min(...(B.get(keyOf(r.id)) || [r.id])), .32); ctx.fill(r.path, "evenodd"); }
+    else if (size(r.id) > 1) { ctx.fillStyle = checked.has(r.id) ? "rgba(46,204,113,.22)" : "rgba(0,213,255,.18)"; ctx.fill(r.path, "evenodd"); }
+  }
+  ctx.lineWidth = 3 * px; ctx.strokeStyle = "rgba(0,0,0,.55)";
+  for (const r of visible) ctx.stroke(r.path);
+  ctx.lineWidth = 1.5 * px;
+  for (const r of visible) {
+    ctx.strokeStyle = drop.has(r.id) ? "#c0392b" : checked.has(r.id) ? "#2ecc71" : "#00d5ff";
+    ctx.stroke(r.path);
+  }
+  if (sel != null && regions.has(sel)) {    // the selected building, then the clicked region inside it
+    for (const id of membersOf(sel)) {
+      const r = regions.get(id);
+      ctx.strokeStyle = "#000"; ctx.lineWidth = 6 * px; ctx.stroke(r.path);
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = 3 * px; ctx.stroke(r.path);
+    }
+    ctx.setLineDash([4 * px, 3 * px]); ctx.strokeStyle = "#000"; ctx.lineWidth = 1.5 * px;
+    ctx.stroke(regions.get(sel).path); ctx.setLineDash([]);
+  }
+  // review marks go on top so the selection never hides them
+  const warned = new Set(warnings.flatMap((w) => w.ids));
+  for (const r of visible) {
+    if (drop.has(r.id)) continue;
+    let c = null, dash = [];
+    if (warned.has(r.id)) { c = "#ff3b30"; dash = [8 * px, 4 * px]; }
+    else if (!reviewed.has(r.id) && r.flag) c = "#ff9f1a";
+    else if (!reviewed.has(r.id) && r.suspect) { c = "#ff4fa3"; dash = [6 * px, 4 * px]; }
+    if (!c) continue;
+    ctx.strokeStyle = c; ctx.lineWidth = 2.5 * px; ctx.setLineDash(dash); ctx.stroke(r.path); ctx.setLineDash([]);
+  }
+  // labels in screen space: ×n on merged buildings, ✓ on checked single regions, ? pins when zoomed out
+  ctx.save(); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.font = "bold 12px -apple-system, system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  const toScreen = ([x, y]) => [(x - view.x) * view.s, (y - view.y) * view.s];
+  if (view.s > 0.12) for (const ids of B.values()) {
+    if (!ids.some((i) => onScreen(regions.get(i)))) continue;
+    const [sx, sy] = toScreen(centroid(ids));
+    if (ids.length > 1) label(`×${ids.length}`, sx, sy, checked.has(ids[0]) ? "#1e8449" : "#0a7a99");
+    else if (checked.has(ids[0]) && view.s > 0.2) label("✓", sx, sy, "#1e8449");
+  }
+  if (view.s < 0.3) for (const q of queue()) {
+    const r = regions.get(q.ids[0]);
+    if (!r || !onScreen(r)) continue;
+    const [sx, sy] = toScreen([r.cx, r.bbox[1]]);
+    label("?", sx, sy - 9, q.kind === "flag" ? "#c77700" : q.kind === "suspect" ? "#c2185b" : "#c0392b");
+  }
+  ctx.restore();
+}
+function drawFinal(x0, y0, x1, y1, px) {
+  const selF = sel != null ? finalOf.get(sel) : null;
+  for (const f of finals.values()) {
+    if (f.bbox[2] < x0 || f.bbox[0] > x1 || f.bbox[3] < y0 || f.bbox[1] > y1 || !usableFinal(f)) continue;
+    const on = f.id === selF;
+    ctx.strokeStyle = "rgba(0,0,0,.7)"; ctx.lineWidth = (on ? 6 : 4) * px; ctx.stroke(f.path);
+    if (finalStale(f)) { ctx.setLineDash([6 * px, 4 * px]); ctx.strokeStyle = "#ff3b30"; }
+    else ctx.strokeStyle = "#e040fb";
+    ctx.lineWidth = (on ? 3 : 2) * px; ctx.stroke(f.path); ctx.setLineDash([]);
+  }
+  for (const w of walls) {                  // the drawn walls, where the outlines were moved to
+    ctx.beginPath(); w.line.forEach(([x, y], i) => i ? ctx.lineTo(x + .5, y + .5) : ctx.moveTo(x + .5, y + .5));
+    ctx.strokeStyle = "rgba(0,0,0,.7)"; ctx.lineWidth = 3.5 * px; ctx.stroke();
+    ctx.strokeStyle = "#b6ff00"; ctx.lineWidth = 1.5 * px; ctx.stroke();
+  }
+}
+function label(t, x, y, bg) {
+  const w = ctx.measureText(t).width + 8;
+  ctx.fillStyle = bg; ctx.beginPath(); ctx.roundRect(x - w / 2, y - 8, w, 16, 4); ctx.fill();
+  ctx.fillStyle = "#fff"; ctx.fillText(t, x, y + 1);
+}
+function polyPath(p, path = new Path2D()) {    // corners are pixel indices: draw them at pixel centers
+  p.forEach(([x, y], i) => i ? path.lineTo(x + .5, y + .5) : path.moveTo(x + .5, y + .5)); path.closePath(); return path;
+}
+function strokePoly(p, c, w, selected) {
+  const path = polyPath(p);
+  if (selected) { ctx.strokeStyle = "#fff"; ctx.lineWidth = w * 3; ctx.stroke(path); }
+  ctx.strokeStyle = c; ctx.lineWidth = w; ctx.stroke(path);
+}
+const box = ([[ax, ay], [bx, by]]) => [[ax, ay], [bx, ay], [bx, by], [ax, by]];
+
+// ---------- view ----------
+function fit() {
+  const W = canvas.clientWidth, H = canvas.clientHeight;
+  view.s = Math.min(W / S.width, H / S.height) * 0.97;
+  view.x = (S.width - W / view.s) / 2; view.y = (S.height - H / view.s) / 2;
+  draw();
+}
+function zoomAt(sx, sy, f) {
+  const ns = Math.min(8, Math.max(0.03, view.s * f));
+  view.x += sx / view.s - sx / ns; view.y += sy / view.s - sy / ns; view.s = ns; draw();
+}
+function centerOn(ids) {
+  const W = canvas.clientWidth, H = canvas.clientHeight;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const id of ids) { const b = regions.get(id).bbox; x0 = Math.min(x0, b[0]); y0 = Math.min(y0, b[1]); x1 = Math.max(x1, b[2]); y1 = Math.max(y1, b[3]); }
+  view.s = Math.min(1.2, Math.max(0.35, Math.min(W / (x1 - x0), H / (y1 - y0)) / 4));  // the region plus its block
+  view.x = (x0 + x1) / 2 - W / 2 / view.s; view.y = (y0 + y1) / 2 - H / 2 / view.s;
+}
+function panTo(r) {                       // keep the zoom, move only if the region is off screen
+  const W = canvas.clientWidth, H = canvas.clientHeight, m = 60 / view.s;
+  const size = Math.max(r.bbox[2] - r.bbox[0], r.bbox[3] - r.bbox[1]);
+  if (size * view.s < 30) {               // too small to see at this zoom (a sliver): zoom in to ~100 px
+    view.s = Math.min(4, Math.max(view.s, 100 / size));
+    view.x = r.cx - W / 2 / view.s; view.y = r.cy - H / 2 / view.s;
+    return;
+  }
+  if (view.s < 0.2) return centerOn([r.id]);
+  if (r.cx < view.x + m || r.cx > view.x + W / view.s - m || r.cy < view.y + m || r.cy > view.y + H / view.s - m) {
+    view.x = r.cx - W / 2 / view.s; view.y = r.cy - H / 2 / view.s;
+  }
+}
+const toSheet = (e) => {
+  const b = canvas.getBoundingClientRect();
+  return [view.x + (e.clientX - b.left) / view.s, view.y + (e.clientY - b.top) / view.s];
+};
+function inPoly(x, y, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i], [xj, yj] = poly[j];
+    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+function inRegion(r, x, y) {
+  let inside = false;
+  for (const ring of r.rings) if (inPoly(x - .5, y - .5, ring)) inside = !inside;
+  return inside;
+}
+function regionAt(x, y) {
+  for (const r of regions.values()) {
+    const [x0, y0, x1, y1] = r.bbox;
+    if (x >= x0 && x <= x1 && y >= y0 && y <= y1 && inRegion(r, x, y)) return r.id;
+  }
+  return null;
+}
+
+// ---------- mouse ----------
+canvas.addEventListener("mousedown", (e) => {
+  if (!ready || e.button !== 0) return;
+  lastInput = Date.now();
+  drag = {sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y, moved: false};
+  if (e.shiftKey && mode === "select" && !busy) stroke = [toSheet(e)];
+});
+addEventListener("mousemove", (e) => {
+  if (!drag) {
+    if (e.target !== canvas || !ready) return;
+    const h = regionAt(...toSheet(e));
+    if (h !== hover) { hover = h; const t = hintText(); $("hint").textContent = t; $("hint").style.display = t ? "block" : "none"; }
+    return;
+  }
+  const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+  if (Math.hypot(dx, dy) > 4) drag.moved = true;
+  if (!drag.moved) return;
+  if (stroke) { stroke.push(toSheet(e)); draw(); }
+  else { view.x = drag.vx - dx / view.s; view.y = drag.vy - dy / view.s; draw(); }
+});
+addEventListener("mouseup", (e) => {
+  if (!drag) return;
+  const d = drag; drag = null;
+  if (stroke) {
+    const ids = [];
+    for (const p of stroke) { const id = regionAt(...p); if (id != null && !ids.includes(id)) ids.push(id); }
+    stroke = null;
+    if (d.moved) { if (!strokeMerge(ids)) draw(); return; }
+  }
+  if (!d.moved && e.target === canvas) click(e);
+});
+canvas.addEventListener("dblclick", (e) => { if (mode !== "select") { e.preventDefault(); finish(e.shiftKey); } });
+
+function click(e) {
+  if (busy) return toast("Wait a moment: the server is still working.", "info");
+  const [x, y] = toSheet(e);
+  if (mode === "select") {
+    const id = regionAt(x, y);
+    if (id != null && !usable(regions.get(id))) return toast("Outside the extents: nothing to do there.", "info");
+    if (needsExtent() && id != null) return toast("Draw an extent first: press E.", "err");
+    const shift = e.shiftKey || clickAs === "merge" || clickAs === "join", alt = e.altKey || clickAs === "join";
+    if ((clickAs === "drop" || (e.altKey && !e.shiftKey)) && id != null) { dropToggle([id]); return; }
+    if (shift && id != null) return shiftClick(id, alt);
+    return select(id);
+  }
+  if ((mode === "extent" || mode === "ignore") && !draft.length) {  // clicking inside an existing extent / ignore box selects it
+    const list = mode === "extent" ? extents : ignore;
+    const i = list.findIndex((p) => inPoly(x, y, p));
+    if (i >= 0 && !(selPoly && selPoly.kind === mode && selPoly.i === i)) {
+      selPoly = {kind: mode, i}; toast("Selected. Press Delete to remove it, or click again to draw here.", "info"); return draw();
+    }
+  }
+  selPoly = null;
+  const p = [Math.floor(x), Math.floor(y)], last = draft[draft.length - 1];
+  // a double click fires two clicks first: don't add the same point twice
+  if (!last || Math.hypot(last[0] - p[0], last[1] - p[1]) * view.s > 3) draft.push(p);
+  update();
+}
+
+async function finish(keepMode) {
+  if (busy) return;
+  if (mode === "cut") {
+    if (draft.length < 2) return toast("A cut needs at least 2 points.", "err");
+    const line = draft; draft = [];
+    pill("busy", "Cutting…"); busy = true;
+    let r, d;
+    try { r = await post("/api/cut", {line, cuts: nCuts}); d = await r.json(); }
+    catch { draft = line; toast("Can't reach the server: not cut.", "err"); pill("bad", "Server not reachable"); return update(); }
+    finally { busy = false; }
+    if (r.status === 409) return markStale();
+    if (!r.ok) { toast(d.error, "err"); draft = line; pill(dirty ? "busy" : "ok", dirty ? "Saving…" : "Saved"); return update(); }
+    snapshot("cut");
+    applyRegionChange(d); nCuts++;
+    for (const a of d.added) reviewed.add(a.id);
+    sel = d.added[0].id; current = null;
+    if (!keepMode) mode = "select";
+    toast(`Cut into ${d.added.length} regions · ⌘Z undoes`, "info");
+    return changed();
+  }
+  if (mode === "wall") {
+    if (draft.length < 2) return toast("A wall needs at least 2 points.", "err");
+    const f = wallTarget(); if (!f) return;
+    const line = draft; draft = [];
+    const ok = await setWalls([...walls, {line, region: sel, flip: false}], [f.id], walls.length,
+                              "That wall changed nothing: start and end it on the building's outline, or draw it across the building.",
+                              "Wall drawn (X flips which side stays)");
+    if (!ok) draft = line;
+    else if (!keepMode) mode = "select";
+    return update();
+  }
+  if (mode === "select") return;
+  const pts = mode === "ignore" && draft.length === 2 ? box(draft) : draft;
+  if (pts.length < 3) return toast("Needs at least 3 corners (or 2 for an ignore box).", "err");
+  snapshot();
+  (mode === "extent" ? extents : ignore).push(pts);
+  draft = [];
+  if (mode === "extent") placeRegions();
+  toast(mode === "extent" ? "Extent added." : "Ignore box added.", "info");
+  if (!keepMode) mode = "select";
+  changed();
+}
+
+canvas.addEventListener("wheel", (e) => {
+  e.preventDefault(); lastInput = Date.now();
+  if (!ready) return;
+  const b = canvas.getBoundingClientRect();
+  zoomAt(e.clientX - b.left, e.clientY - b.top, Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)));
+}, {passive: false});
+
+// ---------- go to a region (/) ----------
+function goToRegion(text) {
+  const n = parseInt(String(text).replace(/[^0-9]/g, ""), 10);
+  if (!Number.isFinite(n)) return toast("Type a region number.", "err");
+  let id = n;
+  if (!regions.has(n)) {                    // cut since: go to its pieces
+    const pieces = [...regions.values()].filter((r) => r.parent === n).map((r) => r.id);
+    if (!pieces.length) return toast(`There is no region ${n} on this sheet.`, "err");
+    id = pieces[0];
+    toast(`Region ${n} was cut into ${pieces.join(", ")}: showing ${id}.`, "info");
+  }
+  if (mode !== "select") { mode = "select"; draft = []; }
+  sel = id; current = queue().find((q) => q.ids.includes(id)) || null;
+  centerOn(membersOf(id).filter((r) => regions.has(r)));
+  panTo(regions.get(id));                   // a tiny region: zoom in on it
+  const r = regions.get(id), ids = membersOf(id);
+  if (id === n) toast([`Region ${n}`, ids.length > 1 ? `in a building of ${ids.length}` : "on its own",
+                       drop.has(n) ? "dropped" : checked.has(n) ? "checked" : "not checked",
+                       usable(r) ? "" : "outside the extents"].filter(Boolean).join(" · "), usable(r) ? "info" : "err");
+  update();
+}
+$("find").addEventListener("keydown", (e) => {
+  e.stopPropagation();                      // typing here is not a shortcut
+  if (e.key === "Enter") { e.preventDefault(); goToRegion(e.target.value); e.target.select(); }
+  if (e.key === "Escape") { e.target.value = ""; e.target.blur(); }
+});
+
+// ---------- keys ----------
+function setMode(m) {
+  if (draft.length) toast("Drawing discarded.", "info");
+  mode = mode === m ? "select" : m; draft = []; selPoly = null; update();
+}
+
+addEventListener("keydown", (e) => {
+  if (!ready) return;
+  lastInput = Date.now();
+  const k = e.key.toLowerCase();
+  if (k === "tab") { e.preventDefault(); document.body.classList.toggle("collapsed"); return draw(); }
+  if (k === "h") { if (!hidden) { hidden = true; draw(); } return; }   // held: shown again on keyup
+  if (["/", " ", "enter", "backspace", "delete"].includes(k) || ((e.metaKey || e.ctrlKey) && k === "z")) e.preventDefault();
+  command(k, {shift: e.shiftKey, meta: e.metaKey || e.ctrlKey});
+});
+
+// Every action, from a key or from a sidebar button (`button`: no "region under the mouse" fallback).
+function command(k, {shift = false, meta = false, button = false} = {}) {
+  if (k === "/") { document.body.classList.remove("collapsed"); $("find").focus(); $("find").select(); return; }
+  if (k === "f") return fit();
+  if (k === "=" || k === "+") return zoomAt(canvas.clientWidth / 2, canvas.clientHeight / 2, 1.5);
+  if (k === "-") return zoomAt(canvas.clientWidth / 2, canvas.clientHeight / 2, 1 / 1.5);
+  if (busy) return toast("Wait a moment: the server is still working.", "info");
+  if (meta && k === "z") { draft = []; undo(); return; }
+  if (meta) return;
+  if (k === "escape") {
+    if (draft.length) draft = []; else if (mode !== "select") mode = "select"; else { sel = null; current = null; }
+    selPoly = null; return update();
+  }
+  if (k === "enter") return finish(shift);
+  if (k === "backspace" || k === "delete") {
+    if (draft.length) { draft.pop(); return update(); }
+    if (mode === "wall") return removeWall();
+    if (selPoly) {
+      snapshot(); (selPoly.kind === "extent" ? extents : ignore).splice(selPoly.i, 1);
+      if (selPoly.kind === "extent") placeRegions();
+      selPoly = null; return changed();
+    }
+    if (mode === "select" && sel != null) return resetBuilding();
+    return;
+  }
+  if (k === "c") return setMode("cut");
+  if (k === "e") return setMode("extent");
+  if (k === "i") return setMode("ignore");
+  if (k === "t") { look = {state: "fill", fill: "map", map: "state"}[look]; toast(`View: ${{state: "states", fill: "colors per building", map: "map only"}[look]}`, "info"); renderPanel(); return draw(); }
+  if (k === "o") { if (mode === "wall") draft = []; return toggleFinal(); }
+  if (k === "w") return startWall();
+  if (k === "x") return flipWall();
+  if (mode !== "select") return;
+  if (k === " ") return confirmAndNext();
+  if (k === "n") return nextInQueue(false);
+  if (k === "k") return current ? nextInQueue(true) : toast("K keeps the item shown by the review queue (N).", "info");
+  if (k === "d") {
+    const id = sel ?? (button ? null : hover);
+    if (id == null || !regions.has(id) || !usable(regions.get(id))) return toast("Select a region first (or point at one).", "info");
+    const at = current && current.ids.includes(id) ? queue().findIndex((q) => q.ids[0] === current.ids[0]) : -1;
+    const dropped = dropToggle(sel != null ? membersOf(sel) : [id]);
+    if (dropped && at >= 0) { showQueueItem(queue(), at); update(); }  // the dropped item left the queue: `at` is the next one
+    return;
+  }
+  if (k === "u") {
+    if (sel == null || membersOf(sel).length < 2) return toast("U takes the clicked region out of its building: select a merged one first.", "info");
+    return shiftClick(sel, false);
+  }
+  if (k === "b") {
+    const W = canvas.clientWidth, H = canvas.clientHeight, ids = [];
+    for (const r of regions.values())
+      if (usable(r) && !drop.has(r.id) && !checked.has(r.id) && r.cx > view.x && r.cx < view.x + W / view.s && r.cy > view.y && r.cy < view.y + H / view.s) ids.push(r.id);
+    if (!ids.length) return toast("Nothing unchecked on screen.", "info");
+    snapshot(); for (const i of ids) checked.add(i);
+    toast(`Checked ${ids.length} regions on screen · ⌘Z undoes`, "info");
+    return changed();
+  }
+}
+addEventListener("keyup", (e) => { if (e.key.toLowerCase() === "h") { hidden = false; draw(); } });
+addEventListener("blur", () => { if (hidden) { hidden = false; draw(); } });
+addEventListener("resize", draw);
+document.querySelectorAll("summary").forEach((s) => s.addEventListener("click", () => setTimeout(() => s.blur())));
+
+// active time: seconds with some input in the last minute, while the tab is visible
+setInterval(() => {
+  if (!ready || document.hidden || Date.now() - lastInput > 60000) return;
+  activeSeconds++;
+  if (activeSeconds % 15 === 0) { changes++; dirty = true; save(); }
+  if (activeSeconds % 6 === 0) renderPanel();
+}, 1000);
+
+load().catch((e) => { $("title").textContent = "could not load: " + e; pill("bad", "Could not load the sheet"); });
+</script>
+</body>
+</html>

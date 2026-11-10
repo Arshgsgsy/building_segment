@@ -1,0 +1,114 @@
+# Settings for the Sanborn labeling pipeline. You do not need to change anything here to label.
+# Pixel values assume native Library of Congress resolution, about 300 ppi.
+
+paths:
+  data: data
+  manifest: data/manifest.csv
+
+oversegment:                # §9.3, Table 15
+  ink_contrast: 20          # L* units darker than surroundings (black-hat); replaces the guide's absolute L* < 45 rule
+  ink_width: 15             # px, lines thinner than this count as ink
+  ink_L_dark: 25            # always ink below this L*
+  min_ink_cc: 300           # px, drop smaller ink blobs (text)
+  ink_close: 3              # px, bridge small gaps in faded walls
+  fill_chroma: 10           # regions are built from colored fill, not from "not ink" (paper never joins a building)
+  fill_smooth: 5            # px, majority filter on the fill mask
+  min_area: 400             # px
+  min_ink_support: 0.5      # fraction of a region's outline that must lie on ink (rejects stains)
+  grow: 4                   # px into surrounding ink; also the ink-support distance
+  max_hole: 3000            # px, fill enclosed pockets up to this size
+  dash_support: 0.65        # dashed-outline keep rule (porches/sheds whose dashes count as text)
+  dash_chroma: 10           #   min chroma above nearby paper
+  dash_L: 60                #   min mean L*
+  dash_rect: 0.3            #   min area / bounding-rectangle area
+  bridge_length: 31         # px, straight wall pieces extended across drawn gaps
+  bridge_gap: 60            # px, widest wall gap bridged (doors, openings, broken party walls)
+  bridge_span: 150          # px, only walls in ink networks at least this long
+  sliver_r: 9               # px, drop non-compact regions narrower than ~2x this
+  sliver_circ: 0.35         #   and less compact than this (4*pi*A/P^2)
+  hue_cut: 0                # degrees, split regions holding two fill hues this far apart (0 = off; per city)
+  hue_chroma: 15            #   only fill of this chroma counts toward a hue (hue of near-gray fill is noise)
+  dash_cut: 0               # px, also cut along dashed lines this long (0 = off; per city)
+  simplify: 1.0             # px, Douglas-Peucker
+  # targets: under-segmentation ~0, 1.5-3 regions per building
+
+# Per-city knob overrides, applied on top of `oversegment:` for every sheet whose manifest city matches
+# (lowercase). Tuned against that city's labeled sheet; outputs/tuning/<city>/ has the evidence.
+# The wall fit in `dissolve` always uses the shared values, so label outlines follow one convention.
+# Denver (test city) never gets an entry.
+oversegment_by_city:
+  aliquippa:                # outputs/tuning/aliquippa: +10 door-gap walls cut, +4 tiny sheds, 0 under-segmented, +13 junk
+    bridge_length: 25       # rooms split by a wall with a door gap leave 25-30 px stubs; 31 skipped them
+    min_area: 350           # tiny frame sheds hold 350-390 px of fill
+  uhrichsville:             # outputs/tuning/uhrichsville: uncut walls -36%, sheet 6 +212 regions (~90% real), 0 under-segmented, sheet 4 +63 junk
+    bridge_length: 23       # cuts partitions that end in an opening; 21 cuts through letters
+    min_area: 150           # a story mark or X-hatch touching both walls splits a ~30x30 px shed into pieces under 400 px
+  san francisco:            # outputs/tuning/san_francisco (no labels: label-free checks): uncut wall px in the blocks -78%, 47 -> 2 dark flags, no small structure lost
+    ink_contrast: 15        # faint walls on the dark paper, gray-blue iron-clad outlines and pink/green seams reach the ink; 13 only adds holes
+    ink_close: 5            # joins broken wall strokes and wall ends so more walls cut and bridge; 6 eats fill
+    ink_L_dark: 35          # the binding-margin cloth (L* 25-33) becomes ink, so its 47 "dark" junk regions are gone
+    hue_cut: 20             # splits pink/yellow/green neighbours drawn with only a dashed line or none: mixed-color regions 12 -> 0; 15-25 give the same cut
+    dash_cut: 90            # also cuts along long dashed lines (store rows on East St., partitions): +26 regions, no merges
+  savannah:                 # outputs/tuning/savannah (no labels: label-free checks): Lamp Black Works chambers (~480k px) found, held-out uncut wall px -46%
+    ink_close: 5
+    min_ink_support: 0.4    # a 20 px gray band between fill and outline left only 40-50% of the outline on ink: the big chambers were dropped
+    bridge_gap: 80
+    hue_cut: 20
+    dash_cut: 90
+    min_area: 200
+  salt lake city:           # outputs/tuning/salt_lake_city (no labels): uncut wall px in the block -81%, mixed-color regions 19 -> 3, ~2.5x regions
+    ink_close: 5            # joins walls drawn broken by crosses and notes
+    ink_contrast: 17        # faint color seams
+    min_ink_cc: 200         # keeps wall pieces between the words of notes ("WALL TO ROOF")
+    fill_chroma: 8          # gray/olive adobe fill (C* 11-15) came out ragged at 10
+    min_area: 250
+    hue_cut: 20
+  sacramento:               # outputs/tuning/sacramento (no labels): uncut wall px in the blocks -79% (hold-out -82%), mixed-color regions 19 -> 0
+    ink_contrast: 15        # the stained paper (C* 10-37) is one big fill component; closed walls stop buildings leaking into it
+    ink_close: 5            #   (NE lower-half coverage 51% -> 84%)
+    hue_cut: 20             # pink/yellow neighbours
+    dash_cut: 90            # dashed store rows
+    min_area: 250           # small yellow boxes
+  burlington:               # outputs/tuning/burlington (no labels): uncut wall px -57..77%, corrugated-iron warehouse found, store/barber pairs split
+    min_area: 150           # porch and shed pieces split below 400 px by story marks and X's
+    bridge_length: 21       # partitions that stop at a door gap
+    min_ink_support: 0.4    # the corrugated-iron "Ware Ho." gray band isn't ink
+  richmond:                 # outputs/tuning/richmond (no labels): held-out uncut solid-wall px -74%, mixed-color regions 2 -> 0, no merges
+    hue_cut: 20             # yellow sheds/porches against very pale pink brick
+    hue_chroma: 10          #   the pale pink (C* ~13) has no hue at the shared 15
+    dash_cut: 90            # dashed partitions and porch lines
+    bridge_length: 25       # door-gap wall stubs
+    min_area: 250
+
+labels:                     # §4, §9.5: labeling tool and dissolve
+  ignore_value: 65535       # instance-map value for "ignore" (ignore polygons; excluded from the loss)
+  test_cities: [denver]     # locked away until the end (docs/decisions.md)
+  crack_gap: 4              # px, unclaimed ink up to ~2x this between regions of one building becomes that building
+  max_hole: 3000            # px, pockets enclosed by one building up to this size join it
+  snap_gap: 3               # px, gaps up to this wide between two buildings are closed (§4.1)
+  party_wall_min: 10        # px of shared boundary for two buildings to count as a party wall
+  min_piece: 50             # px, pieces smaller than this after a cut join the neighboring piece
+  merge_reach: 8            # px, regions this close may be merged (walls between parts of a building are 1-8 px)
+  extent_share: 0.5         # a building counts as inside an extent when this share of it lies inside
+  wall_width: 3             # px, a wall drawn in the labeling tool (W): its line width
+  wall_snap: 8              # px, a drawn wall's end this close to the building is joined to it
+  fit:                      # wall fit at dissolve time: outlines onto the drawn walls (outputs/wall_fix_study); `dissolve --no-fit` skips it
+    reach: 6                #   px, wall ink a building claims (dashes: reach - 2)
+    peel: 5                 #   px, plain paper removed from the outer edge (spill past dashed and open sides)
+    open_size: 5            #   px, opening that removes spurs from text and lot lines
+    close_size: 9           #   px, closing that bridges the gaps between dashes
+    protect: 3              #   px, never remove pixels this close to another building (party walls)
+    halo_L: 68              #   L*, the light outer halo of a wall stays outside
+    shared_pocket: 120      #   px, background pockets enclosed by several buildings are split between them
+    dash_gap: 15            #   px, widest gap between dashes of one dashed line
+    dash_len: 45            #   px, shortest dashed line
+    dash_thick: 7           #   px, thickest dash (rows of text are thicker)
+    wall_len: 21            #   px, shortest straight wall piece; shorter strokes (text, symbols) don't shape outlines
+    cell_cover: 0.6         #   share of a wall cell a building must cover to get the wedges text or symbols cut off
+    cell_other: 0.05        #   at most this share of the cell may belong to other buildings
+    cell_width: 8           #   px, narrower cells (the paper strip of a double wall) are never filled
+    cell_piece: 800         #   px, largest wedge given back (bigger: a dropped neighbor behind a missed line)
+    trim_radius: 4          #   px, thin spill beyond a straight or dashed wall is removed
+
+polygons:                   # §2.10
+  simplify: 1.5             # px

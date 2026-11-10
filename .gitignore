@@ -1,0 +1,18 @@
+# sheet images: shared separately (too big for git), go in data/raw/
+data/raw/*
+!data/raw/README.txt
+# decoded sheets, rebuilt automatically
+data/cache/
+# the labeling tool's "server is running" marker and half-written saves
+data/labels/*/server.lock
+*.tmp
+# Python / uv
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+outputs/
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
