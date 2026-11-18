@@ -13,7 +13,7 @@ COLUMNS = [
 
 
 def read(path=PATH):
-    """All rows as dicts of strings (pd.read_csv(path) works too for analysis)."""
+    """All rows as dicts of strings."""
     if not path.exists():
         return []
     with open(path, newline="") as f:

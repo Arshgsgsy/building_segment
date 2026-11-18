@@ -1,6 +1,6 @@
-"""Build a synthetic Sanborn-like test sheet plus ground-truth GeoJSON (guide §9.3, Figure 13).
+"""Build a synthetic Sanborn-like test sheet plus ground-truth GeoJSON (guide §9.3).
 
-    uv run python -m sanborn.synthetic [out_dir]
+Run `uv run python -m sanborn.synthetic [out_dir]`.
 """
 import json
 import os

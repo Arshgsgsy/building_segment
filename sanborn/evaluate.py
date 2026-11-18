@@ -1,14 +1,9 @@
-"""Metrics: PQ, recall per size bucket, merges/splits, stain false positives, under-segmentation (guide §7, §9.2)."""
+"""Over-segmenter metrics (guide §9.2)."""
 import numpy as np
 
 
 def overseg_checks(gt, pred, cover=0.2):
-    """The two over-segmenter rules from §9.2, given a labeled instance map `gt` and region map `pred`.
-
-    Rule 1: a region merges buildings g and g' if it covers at least `cover` of each. The
-    under-segmentation rate is the fraction of buildings merged with another; it should be ~0.
-    Rule 2: regions per building counts regions whose majority lies in that building; aim for 1.5-3.
-    """
+    """Under-segmented buildings and regions per building, for instance map `gt` and region map `pred`."""
     n_gt, n_pred = int(gt.max()), int(pred.max())
     pair = gt.ravel().astype(np.int64) * (n_pred + 1) + pred.ravel()
     ov = np.bincount(pair, minlength=(n_gt + 1) * (n_pred + 1)).reshape(n_gt + 1, n_pred + 1)

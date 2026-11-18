@@ -1,7 +1,4 @@
-"""`uv run sheets`: every sheet of the project, whether its image is in place, and how far its labeling is.
-
-  uv run sheets
-"""
+"""`uv run sheets`: every sheet, whether its image is in place, and how far its labeling is."""
 import json
 
 from sanborn import ROOT, manifest

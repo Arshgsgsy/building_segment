@@ -1,19 +1,7 @@
 """Heuristic over-segmenter (guide §9.3): cut a sheet into too many regions along every ink line.
 
-Defaults come from the `oversegment:` block in config.yaml, then the sheet's city entry in
-`oversegment_by_city:` (city from data/manifest.csv); any flag overrides them for one run.
-
-examples:
-  uv run python -m sanborn.oversegment data/synthetic/synthetic_sheet.png --gt data/synthetic/synthetic_gt.geojson
-  uv run python -m sanborn.oversegment data/raw/<sheet>.jp2 --crop 2000,3000,1500,1500 --debug
-  uv run python -m sanborn.oversegment data/raw/<sheet>.jp2 --ink-contrast 15 --min-ink-support 0.4 --tag c15
-
-Outputs go to outputs/overseg/<sheet>[_crop...][_tag]/: qa.png, regions.geojson, labels.png, stats.json,
-and with --debug also input.png, normalized.png, ink.png, fill.png, bridges.png (bridged wall gaps in red).
-
-regions.geojson properties: id, area_px, fill_frac, flag ("round" / "dark" / "pale": likely not a
-building, the labeling tool steps through them), suspect (1: a wall runs inside the region, check for a
-missed cut).
+Knobs come from config.yaml's `oversegment:`, then the sheet's city in `oversegment_by_city:`, then any flag.
+Outputs go to outputs/overseg/<sheet>[_crop][_tag]/ (qa.png, regions.geojson, labels.png, stats.json).
 """
 import argparse
 import json
@@ -29,7 +17,6 @@ from sanborn.data import load_sheet, normalize, paper_color
 from sanborn.evaluate import overseg_checks
 from sanborn.labels import load_polygons, polygonize, qa_overlay, rasterize, write_geojson
 
-# Table 15: what each knob does
 HELP = {
     "ink_contrast": "ink if this many L* units darker than its surroundings. Lower: faded walls missed, buildings merge. Raise: fill texture or stains read as ink, buildings get holes",
     "ink_width": "lines thinner than this count as ink, px. Raise: thick party walls missed. Lower: narrow colored strips read as ink",
@@ -59,12 +46,7 @@ HELP = {
 
 
 def params(sheet=None, **overrides):
-    """Over-segmenter parameters from config.yaml, with overrides.
-
-    With `sheet` (a sheet id or image path), the `oversegment_by_city` entry for that sheet's city in the
-    manifest is applied on top of the shared values. Without it (the wall fit in `dissolve`), only the
-    shared values are used, so label outlines follow one convention on every sheet.
-    """
+    """Config defaults, then the sheet's city knobs (when `sheet` is given), then `overrides`."""
     return argparse.Namespace(**{**load_config()["oversegment"], **city_knobs(sheet), **overrides})
 
 
@@ -82,25 +64,14 @@ def city_knobs(sheet):
 
 
 def segment(rgb, p, paper=None, sheet_edges=(True, True, True, True)):
-    """Steps 1-6 of §9.3. Returns the region map (int32, 0 = not a building) and debug arrays.
-
-    Departures from the guide, all found on real LOC sheets: ink is local contrast instead of an
-    absolute L* threshold; regions are built from colored fill (kept by ink support) instead of from
-    all non-ink pixels (kept by fill fraction), so buildings can't leak into the streets; dashed
-    outlines get their own keep rule (4b); regions are split along bridged wall gaps (4c) and,
-    optionally, along fill hue changes and dashed lines (4d); slivers are dropped (7).
-
-    `sheet_edges` says which sides (top, bottom, left, right) of `rgb` are real sheet edges;
-    for a crop, regions cut by the crop border are kept.
-    """
+    """Steps 1-6 of §9.3 (`sheet_edges`: real sheet sides of `rgb`): the region map (0 = none) and debug arrays."""
     # 1-3a. paper normalization, ink and colored fill
     m = ink_masks(rgb, p, paper)
     norm, L, chroma, ink, ink_all, fill = (m[k] for k in ("normalized", "L", "chroma", "ink", "ink_all", "fill"))
     paper = m["paper"]
     del m
 
-    # 3. regions: 4-connected components of colored fill that isn't ink. Paper is not part of any
-    # region, so a building can't leak into the streets through a door, light court or dashed line.
+    # 3. regions: 4-connected colored fill that isn't ink, so a building can't leak into the streets.
     n, regions = cv2.connectedComponents((fill & ~ink).view(np.uint8), connectivity=4)
     regions = fill_pockets(regions, p.max_hole)  # text and noise holes inside a fill region
 
@@ -115,9 +86,7 @@ def segment(rgb, p, paper=None, sheet_edges=(True, True, True, True)):
             edge[np.unique(side)] = True
     keep &= ~edge
     keep[0] = False
-    # 4b. dashed outlines: their dashes are text-sized, so step 2 removed them and support is low.
-    # Measure support against all ink instead, and require a pale, roughly rectangular fill that
-    # stands out in chroma from the paper around it (text on yellowed paper also has high support).
+    # 4b. dashed outlines: support against all ink, for pale, roughly rectangular fill
     cand = ~keep & ~edge & (area >= p.min_area)
     cand[0] = False
     if cand.any():
@@ -134,14 +103,10 @@ def segment(rgb, p, paper=None, sheet_edges=(True, True, True, True)):
     labels = ids[regions]
     del regions
 
-    # 4c. split along walls whose drawn gaps (doors, openings, broken party walls) no fill-based
-    # region can respect: bridge gaps up to bridge_gap px that continue a straight wall, then cut
-    # along ink plus bridges (ink too, since step 3's pocket fill painted over free-floating walls)
+    # 4c. split along straight walls, with their drawn gaps (doors, broken party walls) bridged.
     bridges = bridge_walls(ink, p.bridge_length, p.bridge_gap, p.bridge_span)
     cut = bridges | ink
-    # 4d (optional). Neighbours of another construction class (pink brick, yellow frame, green, ...)
-    # are often drawn against each other with only a dashed line or no line, so the fill connects
-    # them: also cut along long dashed lines, then split regions that hold two fill hues
+    # 4d (optional). split neighbours of different fill colors drawn with only a dashed line or none.
     if dashes is not None:
         cut |= dashes
     labels = split_pieces(labels, cut, p.min_area)
@@ -151,23 +116,18 @@ def segment(rgb, p, paper=None, sheet_edges=(True, True, True, True)):
         labels, hue_cuts = split_by_hue(labels, hue, p.hue_cut, p.min_area)
         del hue
 
-    # 5. grow into the surrounding ink and anti-aliased halo, nearest region first, so party walls
-    # split down the middle
+    # 5. grow into the surrounding ink, nearest region first, so party walls split down the middle.
     labels = grow(labels, p.grow)
     # 6. fill small unlabeled pockets enclosed by one region (text, symbols)
     labels = fill_pockets(labels, p.max_hole)
-    # 7. drop slivers: strips under ~2*sliver_r px wide that aren't compact (strips along walls,
-    # scale-bar pieces, compass spokes). The smallest real sheds are ~25 px wide.
+    # 7. drop slivers: narrow strips that aren't compact (the smallest real sheds are ~25 px wide).
     labels = drop_slivers(labels, p.sliver_r, p.sliver_circ)
     return labels, {"normalized": norm, "ink": ink, "fill": fill, "paper": paper, "bridges": bridges,
                     "L": L, "chroma": chroma, "hue_cuts": hue_cuts, "dashes": dashes}
 
 
 def hue_field(norm, ok, min_chroma, sigma=2.0, chunk=1024):
-    """Step 4d: per pixel, the hue (a*b* angle, degrees) of the fill around it, NaN where there is no
-    fill nearby of chroma `min_chroma` (the hue of near-gray fill is noise). a* and b* are averaged
-    over the fill only (`ok`: text, walls and dashes left out) with a Gaussian of `sigma` px, so text
-    and dashes take the color of the fill around them."""
+    """Step 4d: per pixel, the hue (degrees) of the fill around it, NaN where no fill of `min_chroma` is nearby."""
     H, W = ok.shape
     out = np.full((H, W), np.nan, np.float32)
     pad = int(4 * sigma) + 2
@@ -187,13 +147,7 @@ def hue_field(norm, ok, min_chroma, sigma=2.0, chunk=1024):
 
 
 def split_by_hue(labels, hue, min_deg, min_area, passes=2, iters=10):
-    """Step 4d: split regions holding two fill hues at least `min_deg` degrees apart.
-
-    Per region, a 2-means on the hue (`hue_field`) of its pixels; if both group centers are `min_deg`
-    apart and each group holds `min_area` px, every pixel joins its nearer group (pixels without a hue
-    the group of the nearest pixel with one) and the region is cut where the group changes. The cut
-    is a partition boundary, so it is closed even where text or a dashed line lies on the color change.
-    `passes` rounds, so a region of three colors splits twice. Returns the labels and the cut pixels."""
+    """Step 4d: split regions holding two fill hues at least `min_deg` apart; returns the labels and the cut pixels."""
     cos_max = np.cos(np.radians(min_deg))
     cuts = np.zeros(labels.shape, bool)
     for _ in range(passes):
@@ -215,7 +169,7 @@ def split_by_hue(labels, hue, min_deg, min_area, passes=2, iters=10):
                 continue
             cls = np.full(m.shape, -1, np.int8)
             cls[known] = g
-            # pixels without a hue (text far from fill, gray fill): the group of the nearest one with
+            # pixels without a hue join the group of the nearest pixel with one
             _, (iy, ix) = ndimage.distance_transform_edt(~known, return_indices=True)
             cls = np.where(m, cls[iy, ix], -1)
             # the boundary of the partition: a pixel whose right or lower neighbour is in the other group
@@ -231,9 +185,7 @@ def split_by_hue(labels, hue, min_deg, min_area, passes=2, iters=10):
 
 
 def two_means(v, iters):
-    """2-means of unit complex numbers `v` (hue directions): (group per item, the two unit centers),
-    or None if all items are alike. Starts from the 10th and 90th percentile of the angle around the
-    mean, so a few stray pixels (halo, stain specks) can't claim a center."""
+    """2-means of unit hue directions `v`: (group per item, the two centers), or None if all are alike."""
     mean = v.mean()
     if abs(mean) < 1e-9:
         return None
@@ -261,11 +213,7 @@ def dash_cut_lines(ink_all, ink, min_len):
 
 
 def ink_masks(rgb, p, paper=None):
-    """Steps 1-3a of §9.3, shared with the dissolve-time wall fit (sanborn.labels.wall_masks).
-
-    Returns the paper color, the paper-normalized sheet, L* and chroma (float32), `ink` (walls: text-sized
-    blobs removed, small gaps closed), `ink_all` (also the small blobs: dashes, text) and `fill` (colored).
-    """
+    """Steps 1-3a of §9.3, shared with the wall fit: paper color, normalized sheet, L*, chroma, ink, ink_all, fill."""
     # 1. paper normalization
     paper = paper_color(rgb) if paper is None else paper
     norm = normalize(rgb, paper)
@@ -273,10 +221,7 @@ def ink_masks(rgb, p, paper=None):
     L, chroma = lab[..., 0], np.hypot(lab[..., 1], lab[..., 2])
     del lab
 
-    # 2. ink: thin lines darker than their surroundings (black-hat on L*), or very dark. Local
-    # contrast works on light and dark paper alike and ignores broad dull fills, where an absolute
-    # L* threshold can't do both. Then drop text-sized blobs and close small wall gaps. `ink_all`
-    # keeps the small blobs too: dashed outlines are made of them.
+    # 2. ink: thin lines darker than their surroundings, or very dark; `ink_all` also keeps dashes and text.
     kernel = np.ones((int(p.ink_width),) * 2, np.uint8)
     ink_all = (cv2.morphologyEx(L, cv2.MORPH_BLACKHAT, kernel) > p.ink_contrast) | (L < p.ink_L_dark)
     ink = remove_small(ink_all, p.min_ink_cc)
@@ -289,16 +234,13 @@ def ink_masks(rgb, p, paper=None):
     # 3a. colored fill
     fill = (chroma > p.fill_chroma).view(np.uint8)
     if p.fill_smooth > 1:
-        fill = cv2.medianBlur(fill, int(p.fill_smooth) | 1)  # majority vote removes fill speckle
+        fill = cv2.medianBlur(fill, int(p.fill_smooth) | 1)
     return {"paper": paper, "normalized": norm, "L": L, "chroma": chroma, "ink": ink, "ink_all": ink_all,
             "fill": fill.view(bool)}
 
 
 def ink_support(regions, ink, dist):
-    """Per region, the fraction of its boundary pixels within `dist` px of ink.
-
-    Crop borders don't count as boundary (edge padding), so buildings cut by a crop keep their support.
-    """
+    """Per region, the fraction of its boundary within `dist` px of ink (crop borders don't count)."""
     pad = np.pad(regions, 1, mode="edge")
     c = pad[1:-1, 1:-1]
     edge = (c != pad[:-2, 1:-1]) | (c != pad[2:, 1:-1]) | (c != pad[1:-1, :-2]) | (c != pad[1:-1, 2:])
@@ -355,7 +297,7 @@ def dashed_box(regions, i, sl, L, chroma, p, pad=25):
         return False
     near = cv2.dilate(m, np.ones((11, 11), np.uint8)).view(bool)
     far = cv2.dilate(m, np.ones((41, 41), np.uint8)).view(bool)
-    ring = far & ~near & (Lw > 70)  # paper around the fill, ink excluded
+    ring = far & ~near & (Lw > 70)
     if ring.sum() < 20 or C[inside].mean() - np.percentile(C[ring], 25) < p.dash_chroma:
         return False
     contours, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
@@ -364,10 +306,7 @@ def dashed_box(regions, i, sl, L, chroma, p, pad=25):
 
 
 def straight_pieces(ink, length):
-    """Horizontal and vertical straight ink pieces at least `length` px long.
-
-    An even `length` is rounded up to odd: OpenCV centers an even kernel off by one, so the opening
-    came out shifted 1 px off the ink and wall-gap bridging silently stopped working."""
+    """Horizontal and vertical straight ink pieces at least `length` px long (odd, since OpenCV shifts even kernels)."""
     length = int(length) | 1
     u = ink.view(np.uint8)
     h = cv2.morphologyEx(u, cv2.MORPH_OPEN, np.ones((1, length), np.uint8)).view(bool)
@@ -421,8 +360,7 @@ def _bridge_rows(ink, start, end, gap, chunk=512):
 
 
 def split_pieces(labels, cut, min_area):
-    """Split each region along `cut` into 4-connected pieces. A piece under `min_area` rejoins the
-    neighbouring piece of the same region it touches most (or stays, if the whole region is small)."""
+    """Split each region along `cut` into pieces; a piece under `min_area` rejoins the neighbour it touches most."""
     m = (labels > 0) & ~cut
     n, pieces = cv2.connectedComponents(m.view(np.uint8), connectivity=4)
     area = np.bincount(pieces.ravel(), minlength=n)
@@ -485,10 +423,7 @@ def drop_slivers(labels, r_max, circ_max):
 
 
 def region_flags(labels, dbg):
-    """Per region id: `flag` marks likely non-buildings for a bulk delete in QGIS (never dropped here):
-    "round" (isolated circles: fire-alarm symbols, tanks, cisterns), "dark" (binding-margin marks, black
-    symbols), "pale" (isolated near-gray blobs: text on yellowed paper). `suspect` marks regions with
-    a straight wall inside them, likely two buildings merged through a gap too wide to bridge."""
+    """Per region: `flag` (round / dark / pale: likely not a building) and `suspect` (a straight wall inside it)."""
     n = int(labels.max())
     r, circ, area, solidity = region_shape(labels)
     idx = np.arange(1, n + 1)
@@ -569,7 +504,7 @@ def main():
         walls[dbg["bridges"]] = (0, 0, 255)  # bridged wall gaps in red
         cv2.imwrite(str(out / "bridges.png"), walls)
 
-    # share of colored-fill pixels that ended up in a region: with no labels, the best sign of dropped buildings
+    # share of colored fill in a region: the best label-free sign of dropped buildings
     coverage = float((dbg["fill"] & (labels > 0)).sum() / max(dbg["fill"].sum(), 1))
     stats = {"sheet": str(a.sheet), "crop": [x, y, w, h], "params": vars(p), "city_knobs": city,
              "paper_rgb": [round(float(c), 1) for c in paper], "regions": n,

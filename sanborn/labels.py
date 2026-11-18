@@ -1,23 +1,7 @@
-"""Load and check label polygons, rasterize instance maps, QA overlays, dissolve merged regions by group (guide §4, §9.5).
+"""Label files, instance maps, cuts, and the dissolve that turns merged regions into training labels (guide §4, §9.5).
 
-examples:
-  uv run dissolve sanborn01500_003_0012
-  (same as: uv run python -m sanborn.labels dissolve sanborn01500_003_0012)
-
-A sheet's labels live in data/labels/<sheet>/, written by the labeling tool (sanborn.labeltool):
-  regions.png       the over-segmenter's region map (uint16), never changed; cuts are replayed on it
-  regions.geojson   the over-segmenter's regions with their flag / suspect properties (read-only copy)
-  edits.json        groups {region: group}, drop, reviewed, extents, ignore polygons, active_seconds,
-                    walls [{line, region, flip}] (drawn walls, applied after the fit: `apply_wall`),
-                    rev (save version: the tool refuses saves from a tab built on an older one)
-  cuts.json         drawn cuts in order, each with its pieces {new region: parent region}
-
-`dissolve` turns them into training labels (§4.4): instances.png (uint16, 0 = background, the
-config's ignore_value = ignore), valid.png (255 = labeled area), buildings.geojson, summary.json
-and qa.jpg, fitted.png / fitted.json (the buildings before the drawn walls and their regions, for the
-labeling tool's final view). summary.json holds n_buildings / n_party_walls / split (the shared manifest is not
-written, so two labelers pushing different sheets never conflict). On the way it moves the
-outlines onto the drawn walls (`fit_to_walls`, config labels.fit; `--no-fit` skips it).
+The labeling tool writes edits.json and cuts.json to data/labels/<sheet>/ next to the read-only regions.png.
+`uv run dissolve <sheet>` writes instances.png, valid.png, buildings.geojson, summary.json and qa.jpg there.
 """
 import argparse
 import json
@@ -51,10 +35,7 @@ def rasterize(geoms, size):
 
 
 def polygonize(labels, simplify=1.0, offset=(0, 0)):
-    """{id: geometry} for every label > 0, outer rings plus holes, simplified with Douglas-Peucker.
-
-    `offset` (x, y) is added to all coordinates, so a crop's polygons land in sheet coordinates.
-    """
+    """{id: geometry} for every label > 0 (holes included), simplified and shifted by `offset`."""
     out = {}
     for i, sl in enumerate(ndimage.find_objects(labels), 1):
         if sl is None:
@@ -92,7 +73,7 @@ def write_geojson(path, geoms, props=None, header=None):
 def qa_overlay(rgb, labels, seed=0):
     """Each region in its own random color over a faded copy of the sheet, with region outlines."""
     colors = np.random.default_rng(seed).integers(40, 230, (labels.max() + 1, 3)).astype(np.uint16)
-    out = (np.asarray(rgb, np.uint16) * 2 + 3 * 255) // 5  # fade toward white
+    out = (np.asarray(rgb, np.uint16) * 2 + 3 * 255) // 5
     m = labels > 0
     out[m] = (out[m] * 2 + colors[labels[m]] * 3) // 5
     edge = np.zeros(labels.shape, bool)
@@ -102,16 +83,10 @@ def qa_overlay(rgb, labels, seed=0):
     return out.astype(np.uint8)
 
 
-# --- cuts: splitting a region the over-segmenter left merged (§9.5 step 4) ---
+# --- cuts (§9.5 step 4) ---
 
 def cut(regions, line, next_id, min_piece=50):
-    """Split every region the polyline `line` [(x, y), ...] runs fully across, in place.
-
-    Each split region is replaced by new ids from `next_id` on. Pixels under the line and pieces
-    under `min_piece` px join the nearest remaining piece, so no pixel changes building. Returns
-    {new id: parent id}; empty if the line separated nothing. Raises ValueError, changing nothing,
-    if the new ids don't fit in the map's dtype.
-    """
+    """Split every region the polyline `line` runs fully across, in place; returns {new id: parent id}."""
     H, W = regions.shape
     pts = np.round(np.asarray(line, float)).astype(np.int32).reshape(-1, 2)
     pts = np.clip(pts, 0, (W - 1, H - 1))  # points off the sheet land on its border
@@ -160,12 +135,7 @@ def uncut(regions, pieces):
 
 
 def load_regions(d, min_piece):
-    """The working region map of a label folder and its cuts: regions.png with cuts.json replayed.
-
-    Replaying instead of saving the edited map keeps a cut to a few bytes on disk. Each cut is
-    replayed with the min_piece it was drawn with and must give the same pieces again, otherwise the
-    edits would point at wrong regions.
-    """
+    """The working region map of a label folder (regions.png with cuts.json replayed) and its cuts."""
     regions = cv2.imread(str(d / "regions.png"), cv2.IMREAD_UNCHANGED)
     cuts = json.loads((d / "cuts.json").read_text())["cuts"] if (d / "cuts.json").exists() else []
     for i, c in enumerate(cuts):
@@ -176,10 +146,7 @@ def load_regions(d, min_piece):
 
 
 def neighbors(regions, reach, ids=None):
-    """{region: [regions within `reach` px]} for all regions, or only `ids`.
-
-    Walls between regions of one building are 1-8 px of ink, so these are the pairs a merge may join.
-    """
+    """{region: [regions within `reach` px]} for all regions, or only `ids`."""
     disk = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * reach + 1,) * 2)
     H, W = regions.shape
     out = {}
@@ -194,14 +161,10 @@ def neighbors(regions, reach, ids=None):
     return out
 
 
-# --- dissolve: regions + edits -> one instance per building (§9.5 step 5, §4.1, §4.4) ---
+# --- dissolve: regions + edits -> one instance per building (§9.5 step 5) ---
 
 def building_map(regions, groups, drop):
-    """Instance map (int32) from the region map, and {building: [region ids]}.
-
-    Regions sharing a group become one building, dropped regions become background, and a region
-    without a group is a building on its own (§9.5).
-    """
+    """Instance map (int32) and {building: [region ids]}: grouped regions merge, dropped ones become background."""
     present = np.flatnonzero(np.bincount(regions.ravel()))
     lut = np.zeros(int(regions.max()) + 1, np.int32)
     index, members = {}, {}
@@ -216,14 +179,7 @@ def building_map(regions, groups, drop):
 
 
 def close_cracks(inst, regions, members, gap):
-    """Give a building the unclaimed ink between its own regions, in place.
-
-    Neighboring regions are often separated by 1-8 px of wall ink that no region grew into.
-    Left alone, a merged building would carry background strips along its interior walls, which
-    would teach the network that those walls separate buildings. The building's closing fills
-    gaps up to 2 x `gap` px; a filled patch is kept only if part of it lies within `gap` + 1 px of
-    two of its regions, so notches in a single region's outline stay as drawn.
-    """
+    """Give a building the unclaimed wall ink between its own regions, in place."""
     square = cv2.getStructuringElement(cv2.MORPH_RECT, (2 * gap + 1,) * 2)  # a disk leaves notches at outer walls
     reach = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * gap + 3,) * 2)
     H, W = inst.shape
@@ -246,12 +202,7 @@ def close_cracks(inst, regions, members, gap):
 
 
 def fill_holes(inst, max_hole):
-    """Fill background pockets of up to `max_hole` px enclosed by one building, in place.
-
-    Pockets holding another building are left alone, as are bigger ones (light courts). A dropped
-    region enclosed by the building (a symbol printed inside it) is filled too: it isn't a building,
-    but the area under it is.
-    """
+    """Fill background pockets of up to `max_hole` px enclosed by one building, in place."""
     for b, sl in enumerate(ndimage.find_objects(inst), 1):
         if sl is None:
             continue
@@ -268,12 +219,7 @@ def fill_holes(inst, max_hole):
 
 
 def snap_gaps(inst, gap):
-    """Close gaps up to `gap` px wide between two different buildings, in place (§4.1).
-
-    Otherwise the contact class won't appear there. A background pixel is filled when, along its
-    row, column or a diagonal, one building lies on one side and another on the other side with at
-    most `gap` px between them; it joins the nearer one. Outer walls and wider alleys stay as drawn.
-    """
+    """Close gaps up to `gap` px wide between two different buildings, in place (§4.1)."""
     top = np.iinfo(np.int32).max
     hi = ndimage.maximum_filter(inst, size=2 * gap + 1)
     lo = ndimage.minimum_filter(np.where(inst > 0, inst, top), size=2 * gap + 1)
@@ -323,13 +269,10 @@ def polygon_mask(polys, shape):
     return mask > 0
 
 
-# Wall fit (dissolve time): move the outlines onto the drawn walls. The over-segmenter's regions follow
-# the colored fill, so outlines wobble, spill ~3 px past dashed sides and are notched wherever text or a
-# symbol touches a wall (outputs/wall_fix_study, docs/boundary_study). Regions and edits are untouched.
+# --- wall fit (dissolve time): move the outlines onto the drawn walls ---
 
 def wall_masks(rgb):
-    """The over-segmenter's ink, ink_all and fill masks and L* (uint8) of a full sheet, for `fit_to_walls`.
-    About 3 s and 1.5 GB on a full sheet."""
+    """The over-segmenter's ink, ink_all and fill masks and L* (uint8) of a full sheet, for `fit_to_walls`."""
     from sanborn.oversegment import ink_masks, params  # oversegment imports this module
     m = ink_masks(np.asarray(rgb), params())
     return {"ink": m["ink"], "ink_all": m["ink_all"], "fill": m["fill"],
@@ -337,10 +280,7 @@ def wall_masks(rgb):
 
 
 def dash_lines(ink_all, ink, gap=15, min_len=45, max_thick=7, min_dashes=2):
-    """Dashed lines (porch and shed sides) completed into lines: rows or columns of at least `min_dashes`
-    thin elongated blobs only `ink_all` holds, with gaps up to `gap` px, at least `min_len` px long
-    (counting solid ink the line runs into). Returns the new pixels: dashes and the gaps between them.
-    A row of text is rejected by its thickness."""
+    """Dashed lines (porch and shed sides) completed into solid lines; returns the new pixels."""
     n, cc, st, _ = cv2.connectedComponentsWithStats((ink_all & ~ink).view(np.uint8), connectivity=8)
     w, h = st[:, cv2.CC_STAT_WIDTH], st[:, cv2.CC_STAT_HEIGHT]
     out = np.zeros_like(ink)
@@ -366,9 +306,7 @@ def dash_lines(ink_all, ink, gap=15, min_len=45, max_thick=7, min_dashes=2):
 
 
 def wall_lines(masks, dashes, length):
-    """(straight, walls): horizontal and vertical pieces of ink plus completed dashes at least `length` px
-    long, with the dashes themselves; `walls` adds the over-segmenter's bridged wall gaps. Text and symbol
-    strokes are not walls, so they can't shape an outline."""
+    """(straight, walls): straight ink and completed dashes of `length` px or more; `walls` adds bridged gaps."""
     from sanborn.oversegment import bridge_walls, params, straight_pieces
     p = params()
     h, v = straight_pieces(masks["ink"] | dashes, length)
@@ -377,17 +315,9 @@ def wall_lines(masks, dashes, length):
 
 
 def complete_cells(inst, masks, walls, cover=0.6, other=0.05, min_width=8, max_piece=800):
-    """Give each building the pieces of the wall cell it mostly covers that text or a symbol touching a
-    wall cut off (the wedge behind a "1" or "2"). Returns a new map; only background pixels change.
-
-    Cells are the areas enclosed by straight wall lines alone. A building takes the colored fill, text ink
-    and wall halo of a cell when it covers at least `cover` of the cell and other buildings at most `other`.
-    Only enclosed pieces of up to `max_piece` px are taken (a bigger or open piece is a dropped neighbor,
-    such as a gallery strip, behind a line that wasn't found), and cells narrower than `min_width` px (the
-    paper strip of a double wall) never are.
-    """
+    """Give each building the wall-cell pieces that text or a symbol touching a wall cut off; returns a new map."""
     out = inst.copy()
-    W = cv2.morphologyEx(walls.view(np.uint8), cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))  # corner gaps
+    W = cv2.morphologyEx(walls.view(np.uint8), cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
     W = cv2.dilate(W, np.ones((3, 3), np.uint8)).view(bool)
     n, cells = cv2.connectedComponents((~W).view(np.uint8), connectivity=4)
     dt = cv2.distanceTransform((cells > 0).view(np.uint8), cv2.DIST_L2, 3)
@@ -406,12 +336,12 @@ def complete_cells(inst, masks, walls, cover=0.6, other=0.05, min_width=8, max_p
     ok = wide & (top >= cover * area) & (covered - top <= other * area)
     ok[0] = False
     lut[~ok] = 0
-    halo = cv2.dilate(W.view(np.uint8), np.ones((7, 7), np.uint8)).view(bool)  # light band along the walls
+    halo = cv2.dilate(W.view(np.uint8), np.ones((7, 7), np.uint8)).view(bool)
     cand = (out == 0) & (lut[cells] > 0) & (masks["fill"] | masks["ink_all"] | halo)
 
     pn, piece, pst, _ = cv2.connectedComponentsWithStats(cand.view(np.uint8), connectivity=8)
     k3 = np.ones((3, 3), np.uint8)
-    grown = cv2.dilate(piece.astype(np.float32), k3).astype(np.int32)  # piece id next to each pixel
+    grown = cv2.dilate(piece.astype(np.float32), k3).astype(np.int32)
     border = ~cand & (grown > 0)
     open_px = np.bincount(grown[border & ~W & (out == 0)], minlength=pn)
     total = np.bincount(grown[border], minlength=pn)
@@ -420,8 +350,7 @@ def complete_cells(inst, masks, walls, cover=0.6, other=0.05, min_width=8, max_p
     cand &= ~bad[piece]
     out[cand] = lut[cells][cand]
     if cand.any():
-        # the 1-3 px between the new pixels and the wall ink lie inside W: grow across them, up to the
-        # ink, so the claim step can reach the wall
+        # grow across the 1-3 px between the new pixels and the wall ink
         allowed = (out == 0) & W & ~masks["ink_all"]
         got = _grow_within(cand, allowed | cand, 3, k3) & allowed
         _, (iy, ix) = ndimage.distance_transform_edt(~cand, return_indices=True)
@@ -430,9 +359,7 @@ def complete_cells(inst, masks, walls, cover=0.6, other=0.05, min_width=8, max_p
 
 
 def trim_beyond_walls(inst, straight, radius=4):
-    """Drop thin pieces (inscribed radius <= `radius` px) of a building that lie beyond one of its straight
-    walls or completed dashed lines on open background: fill spilled past a dashed porch side. A piece
-    next to another building (the paper strip of a double wall) is kept."""
+    """Drop thin pieces of a building that spill past one of its straight or dashed walls onto open background."""
     out = inst.copy()
     bg = (inst == 0) & ~straight
     H, W = inst.shape
@@ -470,9 +397,7 @@ def _grow_within(seed, allowed, steps, k):
 
 
 def _claim(inst, ink, reach, L, halo_L):
-    """Background ink touching a building, within `reach` px through ink, to the nearest building. The
-    light outer halo (L* >= halo_L) reached from outside stays background, so the outline sits on the
-    wall's half-darkness outer edge."""
+    """Give background ink touching a building, within `reach` px, to the nearest building."""
     allowed = ink & (inst == 0)
     k8 = np.ones((3, 3), np.uint8)
     got = _grow_within(cv2.dilate((inst > 0).view(np.uint8), k8) > 0, allowed, reach - 1, k8)
@@ -488,8 +413,7 @@ def _claim(inst, ink, reach, L, halo_L):
 
 
 def _peel(inst, ink_all, fill, depth):
-    """Building pixels within `depth` px of background that are plain paper, reached from outside: the
-    over-segmenter's grow past dashed or open sides."""
+    """Building pixels within `depth` px of background that are plain paper reached from outside."""
     bg = (inst == 0).view(np.uint8)
     d_in = cv2.distanceTransform(1 - bg, cv2.DIST_L2, 3)
     paper = (inst > 0) & ~fill & ~ink_all & (d_in <= depth)
@@ -500,8 +424,7 @@ def _peel(inst, ink_all, fill, depth):
 
 
 def _smooth(inst, open_size, close_size, protect):
-    """Per building, a square opening (spurs from text or lot lines; never within `protect` px of another
-    building, which counts as solid) and a square closing (gaps between dashes; adds background only)."""
+    """Per building, a square opening (removes spurs) and closing (fills gaps between dashes)."""
     out = inst.copy()
     H, W = inst.shape
     pad = max(open_size, close_size, 2 * protect + 1) + 2
@@ -537,8 +460,7 @@ def _smooth(inst, open_size, close_size, protect):
 
 
 def _fill_shared_pockets(inst, max_px):
-    """Background pockets of up to `max_px` px enclosed only by buildings, each pixel to its nearest
-    building, so the contact band along a shared wall is not broken. In place."""
+    """Give background pockets of up to `max_px` px enclosed only by buildings to the nearest building, in place."""
     n, lab, st, _ = cv2.connectedComponentsWithStats((inst == 0).view(np.uint8), connectivity=4)
     H, W = inst.shape
     k4 = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
@@ -559,14 +481,7 @@ def _fill_shared_pockets(inst, max_px):
 def fit_to_walls(inst, masks, reach=6, peel=5, open_size=5, close_size=9, protect=3, halo_L=68,
                  shared_pocket=120, max_hole=3000, dash_gap=15, dash_len=45, dash_thick=7, wall_len=21,
                  cell_cover=0.6, cell_other=0.05, cell_width=8, cell_piece=800, trim_radius=4):
-    """Outlines of a dissolved instance map moved onto the drawn walls; `masks` from `wall_masks`.
-
-    In order: dashed lines are completed into walls; cut-off wedges are given back (`complete_cells`);
-    spill beyond straight and dashed walls (`trim_beyond_walls`) and plain paper in the outer `peel` px are
-    removed; wall ink within `reach` px is claimed, nearest building first, so shared walls split down the
-    middle; outlines are smoothed; pockets are filled. Buildings only gain background or give pixels back
-    to it: no pixel changes from one building to another. About 30 s and 3.5 GB on a full sheet.
-    """
+    """Outlines of a dissolved instance map moved onto the drawn walls, never between buildings."""
     inst = inst.astype(np.int32)
     dashes = dash_lines(masks["ink_all"], masks["ink"], dash_gap, dash_len, dash_thick)
     straight, walls = wall_lines(masks, dashes, wall_len)
@@ -587,17 +502,10 @@ def fit_to_walls(inst, masks, reach=6, peel=5, open_size=5, close_size=9, protec
     return out
 
 
-# --- drawn walls (dissolve time, after the fit): the labeler's fixes for outlines the fit got wrong ---
+# --- drawn walls (dissolve time, after the fit) ---
 
 def apply_wall(inst, b, line, flip=False, width=3, snap=8):
-    """Move building `b`'s outline onto a wall drawn as the polyline `line` [(x, y), ...], in place.
-
-    The line follows the outer edge of the real wall. An end within `snap` px of the building is joined
-    to it. The line itself and the background it closes off against the building (a missing corner, an
-    edge that stops short) join `b`. Where the line runs across the building, the largest part stays
-    (`flip`: the second largest) and the others become background (spill past the wall). Pixels of other
-    buildings never change. Returns the number of pixels changed (0: the line did nothing).
-    """
+    """Move building `b`'s outline onto the wall drawn as polyline `line`, in place; returns the pixels changed."""
     H, W = inst.shape
     pts = np.clip(np.round(np.asarray(line, float)).astype(np.int64).reshape(-1, 2), 0, (W - 1, H - 1))
     ys, xs = np.nonzero(inst == b)
@@ -629,7 +537,6 @@ def apply_wall(inst, b, line, flip=False, width=3, snap=8):
     keep_pocket[0] = False
     grown = own | keep_pocket[pockets]
 
-    # parts of the building on either side of the line: the largest stays
     parts, n = ndimage.label(grown & ~stroke)
     size = np.bincount(parts.ravel(), minlength=n + 1)
     touching = np.unique(parts[near_line & (parts > 0)])
@@ -642,10 +549,9 @@ def apply_wall(inst, b, line, flip=False, width=3, snap=8):
         keep[order[1 if flip else 0]] = True
     keep[0] = False
     body = keep[parts]
-    # the half of the line facing the kept body joins it, so the outline lands on the line; the far
-    # half and tails past the building's ends stay out
-    near = wall & (ndimage.distance_transform_cdt(~body, "chessboard") <= width // 2 + 1)  # square corners
-    # a line running past the building's corner would leave a nub there: keep only the line that runs along it
+    # the half of the line facing the kept body joins it, so the outline lands on the line
+    near = wall & (ndimage.distance_transform_cdt(~body, "chessboard") <= width // 2 + 1)
+    # keep only the line running along the building, so its corner gets no nub
     along = cv2.morphologyEx((body | near).astype(np.uint8), cv2.MORPH_OPEN, np.ones((3, 3), np.uint8)) > 0
     new = body | (near & along)
     lost, gained = own & ~new, new & ~own
@@ -655,11 +561,7 @@ def apply_wall(inst, b, line, flip=False, width=3, snap=8):
 
 
 def apply_walls(inst, walls, members, width=3, snap=8, only=None):
-    """Apply the drawn walls in order, in place; each wall names a region, and changes that region's building.
-
-    `members` {building: [regions]} is `inst`'s. `only` limits it to those buildings. Returns per wall the
-    pixels it changed, or None when its region is in no building (dropped, cut since) or not in `only`.
-    """
+    """Apply the drawn walls in order, in place; returns per wall the pixels changed (None: no building)."""
     owner = {r: b for b, rs in members.items() for r in rs}
     out = []
     for w in walls:
@@ -672,15 +574,7 @@ def apply_walls(inst, walls, members, width=3, snap=8, only=None):
 
 
 def dissolve(regions, edits, cfg, masks=None, keep_base=False):
-    """Training labels from a region map and the labeler's edits.
-
-    Returns (instances uint16, valid bool, info). Without extents the whole sheet is labeled;
-    with extents only buildings mostly inside them are kept, and the area of buildings mostly
-    outside is marked not labeled, so no building is half labeled. With `masks` (from `wall_masks`)
-    and a `fit` block in `cfg`, outlines are moved onto the drawn walls first (`fit_to_walls`). The walls
-    the labeler drew (edits "walls") come after the fit, so it can't undo them. `keep_base` adds the
-    buildings before those walls to info (base, base_members): the labeler's final view starts from them.
-    """
+    """Training labels (instances uint16, valid bool, info) from a region map and the labeler's edits."""
     groups = {int(k): v for k, v in edits.get("groups", {}).items()}
     drop = set(map(int, edits.get("drop", [])))
     inst, members = building_map(regions, groups, drop)
@@ -719,7 +613,6 @@ def dissolve(regions, edits, cfg, masks=None, keep_base=False):
     ignored = polygon_mask(edits.get("ignore", []), inst.shape)
     inst[ignored] = 0  # counted as neither building nor background, so buildings and walls are counted without them
 
-    # number buildings 1..N and keep track of their regions
     ids = np.flatnonzero(np.bincount(inst.ravel()))
     ids = ids[ids > 0]
     lut = np.zeros(int(inst.max()) + 1, np.int32)

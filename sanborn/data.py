@@ -1,4 +1,4 @@
-"""Sheet loading and paper normalization (guide §5.3). Later: tile sampler, augmentation, stain bank (§5.2, §5.4)."""
+"""Sheet loading and paper normalization (guide §5.3)."""
 from pathlib import Path
 
 import cv2
@@ -12,7 +12,7 @@ CACHE = ROOT / "data" / "cache"
 
 
 def load_sheet(path):
-    """RGB uint8 array. A JP2 is decoded once and cached as .npy; later loads are memory-mapped and instant."""
+    """Load a sheet as RGB uint8; a JP2 is decoded once and cached as a memory-mapped .npy."""
     path = Path(path)
     if path.suffix.lower() != ".jp2":
         return np.asarray(Image.open(path).convert("RGB"))
@@ -35,6 +35,6 @@ def paper_color(img, step=8):
 
 
 def normalize(img, paper):
-    """Divide by the paper color so paper becomes white. Returns float32 RGB in [0, 1]."""
+    """Divide by the paper color so paper becomes white (float32 RGB in [0, 1])."""
     out = img.astype(np.float32) / np.maximum(paper, 1).astype(np.float32)
     return np.clip(out, 0, 1, out=out)

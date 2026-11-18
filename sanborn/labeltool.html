@@ -194,8 +194,7 @@ function addRegion(r) {
   regions.set(r.id, reg);
 }
 
-// The share of each region that lies inside the extents, sampled on an 8 x 8 grid. Dissolve keeps a
-// building when at least half of it lies inside, so the page uses the same rule per region.
+// The share of each region inside the extents, sampled on an 8 x 8 grid (dissolve keeps a building at half).
 function placeRegions(list = regions.values()) {
   for (const r of list) {
     if (!extents.length) { r.share = 1; continue; }
@@ -353,8 +352,7 @@ function dropToggle(ids) {
   return !all;
 }
 
-// Delete: start the building over. Its regions go back to being unchecked, separate, not dropped,
-// and flagged or suspect ones return to the review queue.
+// Delete: start the building over, its regions unchecked, separate and back in the review queue.
 function resetBuilding() {
   if (sel == null || !regions.has(sel)) return toast("Select a building first.", "info");
   const ids = membersOf(sel);
@@ -407,9 +405,7 @@ function showQueueItem(q, at) {
 }
 
 // ---------- final outlines (O) and drawn walls (W) ----------
-// The final outlines come from the last dissolve (fitted.png), with this tab's walls applied by the
-// server. A building whose merges changed since then is out of date: no wall can be drawn on it
-// until dissolve runs again.
+// Final outlines come from the last dissolve with this tab's walls applied; changed buildings need a new dissolve.
 const finalFor = (id) => finals.get(finalOf.get(id));
 function finalStale(f) {
   const r0 = f.regions[0];
@@ -466,8 +462,7 @@ async function toggleFinal(on = !showFinal) {
   return true;
 }
 
-// Send a new wall list; the server answers with the new outlines of `ids` and what each wall changed.
-// Wall `i` (the one just drawn or flipped) must change something, otherwise nothing is kept.
+// Send a new wall list; wall `i` (just drawn or flipped) must change something, otherwise it isn't kept.
 async function setWalls(ws, ids, i, emptyMsg, okMsg) {
   busy = true; pill("busy", "Applying the wall…");
   let d;
@@ -528,12 +523,10 @@ function changed() { changes++; dirty = true; update(); clearTimeout(saveTimer);
 const editsBody = () => ({groups: Object.fromEntries(groups), drop: [...drop], reviewed: [...reviewed],
                           checked: [...checked], accepted: [...accepted], extents, ignore, walls,
                           active_seconds: activeSeconds, rev});
-// every request names the sheet and its label folder (epoch), so a tab left over from another
-// sheet or from a reset folder is refused
+// Every request names the sheet and label folder (epoch), so a leftover tab is refused.
 const post = (url, body) => fetch(url, {method: "POST", body: JSON.stringify({...body, sheet: S.sheet, epoch: S.epoch})});
 
-// The server only accepts a save built on the version it has (rev), so a stale tab can't overwrite
-// newer edits. One save at a time: a change made meanwhile is sent right after.
+// Saves must build on the server's version (rev), one at a time, so a stale tab can't overwrite newer edits.
 async function save() {
   if (!ready || stale) return;
   if (saving) { saveAgain = true; return; }
@@ -692,7 +685,7 @@ function renderPanel() {
     .map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("");
 }
 
-// The sidebar's buttons: the keys that make sense right now, clickable. Each runs command(), like its key.
+// The sidebar's buttons: the keys that make sense right now, each running command() like its key.
 function renderTools() {
   const b = (k, label, kbd, {on = false, off = false, go = false, shift = false, title = ""} = {}) =>
     `<button data-k="${k}"${shift ? ' data-shift="1"' : ""} class="${on ? "on" : go ? "go" : ""}"${off ? " disabled" : ""}${title ? ` title="${title}"` : ""}>${label}${kbd ? `<kbd>${kbd}</kbd>` : ""}</button>`;

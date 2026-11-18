@@ -61,9 +61,7 @@ def test_straight_pieces_stay_on_ink_for_even_lengths():
 
 
 def test_hue_cut_splits_yellow_frame_from_green_neighbour():
-    """Real crop of San Francisco sheet sanborn00813_008_0005 (x 1640, y 2380): the yellow Rest't and
-    green Sal & Lunch buildings, drawn against each other with only a dashed line. Without the hue cut
-    they come out as one region."""
+    """Real San Francisco crop where yellow and green buildings meet at a dashed line: the hue cut must split them."""
     cfg = load_config()
     assert cfg["oversegment"]["hue_cut"] == 0 and cfg["oversegment"]["dash_cut"] == 0  # off for other cities
     sf = cfg["oversegment_by_city"]["san francisco"]

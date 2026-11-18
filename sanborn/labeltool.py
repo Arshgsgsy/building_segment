@@ -1,22 +1,7 @@
-"""Browser labeling tool for merge-and-delete (guide §9.5).
+"""Browser labeling tool: merge pre-cut regions into buildings, drop non-buildings and cut missed walls.
 
-examples:
-  uv run label sanborn01500_003_0012
-  uv run label sanborn01500_003_0012 --port 8766
-
-Opens a local page (http://127.0.0.1:8765) showing the sheet with its pre-cut regions.
-You only merge regions into buildings, drop non-buildings, cut the rare missed wall, and draw
-extents (the labeled area) and ignore boxes; the keys are listed in the page's side panel.
-
-After a dissolve, O shows the final outlines (what training sees: the regions after the wall fit), and
-W draws a wall on the selected building where its final outline is wrong: a line across it removes
-the spill past the wall, a line from its outline out along the real wall and back fills a missing
-corner or a short edge. Walls are stored in edits.json and applied at every dissolve after the fit.
-
-The regions come ready-made in data/labels/<sheet>/ (regions.png, regions.geojson); they are never
-changed: a cut is stored as its line in cuts.json and replayed. Every change is saved there right
-away, with the active minutes spent (see sanborn/labels.py for the files). When a sheet is done:
-  uv run dissolve <sheet>
+Run `uv run label <sheet>` and open http://127.0.0.1:8765; the keys are listed in the page's side panel.
+Every change is saved to data/labels/<sheet>/ right away; `uv run dissolve <sheet>` makes the labels.
 """
 import argparse
 import atexit
@@ -41,7 +26,7 @@ PAGE = Path(__file__).with_name("labeltool.html")
 
 
 class Sheet:
-    """One sheet's image pyramid, working region map (regions.png with the cuts replayed), cuts and edits."""
+    """One sheet's image pyramid, working region map, cuts and edits."""
 
     def __init__(self, name):
         self.name, self.dir = name, LABELS / name
@@ -74,7 +59,7 @@ class Sheet:
         self.parent = {int(k): v for c in self.cuts for k, v in c["pieces"].items()}
         self.lock = threading.Lock()
 
-        # training sheets are labeled inside extents, the test city as a whole sheet (docs/decisions.md)
+        # training sheets are labeled inside extents, the test city as a whole sheet
         row = next((r for r in manifest.read() if r["sheet_id"] == name), {})
         self.city = row.get("city", "")
         self.split = "test" if self.city.lower() in cfg["test_cities"] else "train"
@@ -117,11 +102,7 @@ class Sheet:
         return body.get("sheet") == self.name and body.get("epoch") == self.epoch
 
     def save_edits(self, edits):
-        """Save the page's edits if they build on the saved version; returns the new version, or None.
-
-        A page of another sheet or of an earlier label folder, or one that sent an older version
-        (a second tab), is refused, so it can't overwrite newer edits.
-        """
+        """Save the page's edits if they build on the saved version; returns the new version, or None."""
         with self.lock:
             saved = self.read("edits.json", {}).get("rev", 0)
             if not self.current(edits) or edits.get("rev") != saved:
@@ -169,12 +150,7 @@ class Sheet:
         return True
 
     def final(self, body):
-        """Final outlines: the last dissolve's buildings with the page's walls applied.
-
-        `ids` limits the reply to those buildings (after a wall is drawn, flipped or undone). Per wall,
-        the pixels it changed (0: nothing, None: its region is in no building), so the page can refuse a
-        wall that does nothing.
-        """
+        """The last dissolve's buildings with the page's walls applied, and the pixels each wall changed."""
         with self.lock:
             if not self.current(body):
                 return 409, {"error": "stale"}
@@ -207,10 +183,7 @@ class Sheet:
         return self.tiles[z, x, y]
 
     def cut(self, body):
-        """Apply a drawn cut: (status, reply) with the replaced ids and the new pieces' outlines.
-
-        The page sends how many cuts it knows of; a page that missed one (another tab) is refused.
-        """
+        """Apply a drawn cut, refusing a page that missed an earlier one; returns (status, reply)."""
         with self.lock:
             if not self.current(body) or body.get("cuts") != len(self.cuts):
                 return 409, {"error": "stale"}
